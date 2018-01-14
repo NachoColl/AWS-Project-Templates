@@ -1,0 +1,66 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: 'AWS::Serverless-2016-10-31'
+Description: Simple AWS Lambda Example. 
+
+Resources:
+
+  lambda1:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      Handler: lambda_1.handler
+      Runtime: nodejs6.10
+      Description: ''
+      MemorySize: 128
+      Timeout: 15
+      Role: !Ref LambdasRole
+  
+  # local dynamoDB table creation:
+  # aws dynamodb --endpoint-url http://localhost:8000 create-table --table-name L --attribute-definitions AttributeName=CODE,AttributeType=S --key-schema AttributeName=CODE,KeyType=HASH --provisioned-throughput ReadCapacityUnits=1,WriteCapacityUnits=1   
+  lambda1_DynamoDBTable: 
+    Type: "AWS::DynamoDB::Table"
+    Properties: 
+      AttributeDefinitions: 
+        - 
+          AttributeName: "CODE"
+          AttributeType: "S"
+
+      KeySchema: 
+        - 
+          AttributeName: "CODE"
+          KeyType: "HASH"
+
+      ProvisionedThroughput: 
+        ReadCapacityUnits: "5"
+        WriteCapacityUnits: "5"
+        
+      TableName: "lambda1"
+
+  ##################################################################
+  #  IAMs                                                          #
+  #                                                                #
+  ##################################################################
+
+  # Role for Lambdas
+  LambdasRole:
+     Type: "AWS::IAM::Role"
+     DeletionPolicy: Delete
+     Properties:
+       AssumeRolePolicyDocument:
+         Version: "2012-10-17"
+         Statement:
+           - Effect: Allow
+             Principal:
+               Service:
+                 - lambda.amazonaws.com
+             Action:
+               - "sts:AssumeRole"
+       Path: "/"
+       Policies:
+         - PolicyName: !Sub "lambdas"
+           PolicyDocument:
+             Version: "2012-10-17"
+             Statement:
+               - Effect: "Allow"
+                 Action: "*"
+                 Resource: "*"
+      
