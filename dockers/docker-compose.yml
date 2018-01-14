@@ -1,0 +1,15 @@
+version: '0.1'
+
+services:
+
+  dynamoDB:
+    image: "nachocoll/dynamodb:latest"
+    ports:
+      - "8000:8000"
+
+  s3:
+    image: "nachocoll/s3:latest"
+    ports:
+      - "8001:8001"
+  
+
