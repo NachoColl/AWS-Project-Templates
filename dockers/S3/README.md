@@ -2,8 +2,7 @@ S3 Docker Image.
 
 ## Origin
 
-Run S3rver service. 
-https://github.com/jamhall/s3rver
+S3rver service: https://github.com/jamhall/s3rver
 
 ## How to run the image
 
