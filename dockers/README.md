@@ -1,4 +1,4 @@
-Some docker images to run cloud services locally.
+Some docker images to run AWS cloud services locally.
 
 ### Services List
 

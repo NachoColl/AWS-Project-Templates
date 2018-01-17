@@ -18,6 +18,5 @@ Some AWS coding templates.
 
 ### AWS Lambda
 
+[Lambda + S3 + DynamoDB](./templates/lambda-dynamoDB-s3)
 A Lambda project using DynamoDB and S3 docker images to test code locally.
-
-[]
