@@ -1,0 +1,713 @@
+---
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: >
+  Default AWS IAM policies for development teams.
+
+Parameters:
+
+  #############
+  #  TAGGING  #
+  #############
+
+  # project code (AppPjCode)
+  ProjectCode: 
+    Type: String
+    Description: "AppPjCode Project code "
+    MinLength: 2
+    MaxLength: 20
+    AllowedPattern: "[a-zA-Z0-9]+"
+    ConstraintDescription: "Provide a valid project code using only letters and numbers."
+
+  # BusinessUnit (BU)
+  BusinessUnit: 
+    Type: String
+    Description: "Business Unit (BU)"
+    MinLength: 2
+    MaxLength: 20
+    AllowedPattern: "[a-zA-Z0-9]+"
+    ConstraintDescription: "Provide a valid business unit code."
+
+  # Cost Center (CC)
+  CostCenter: 
+    Type: String
+    Description: "Cost Center (CC)"
+    MinLength: 2
+    MaxLength: 20
+    AllowedPattern: "[a-zA-Z0-9]+"
+    ConstraintDescription: "Provide the project cost center value."
+
+  # Chargeback (HFM)
+  ChargeBack: 
+    Type: String
+    Description: "Charge Back (HFM)"
+    MinLength: 2
+    MaxLength: 20
+    AllowedPattern: "[a-zA-Z0-9]+"
+    ConstraintDescription: "Provide the project charge back code."
+
+  # Project related VPC
+  ProjectVPCId:
+    Type: String
+    Description: "Allowed VPC"
+    MinLength: 2
+    MaxLength: 20
+    ConstraintDescription: "Provide the VPC this project is allowed to work in."
+
+  ############
+  #  NAMING  #
+  ############
+
+  NamingCode:
+    Type: String
+    Description: "Naming code"
+    MinLength: 2
+    MaxLength: 20
+    AllowedPattern: "[a-zA-Z0-9]+"
+    ConstraintDescription: "Provide a unique code to name certain AWS assets (e.g S3 buckets naming: NamingCode-*)."
+
+Resources:
+
+  # IMPORTANT NOTE: There are IAM sizing restrictions.
+  # https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_iam-limits.html
+
+  ##################################################################
+  #  GROUPS                                                        #
+  #  Group policy size cannot exceed 5,120 characters              #
+  ################################################################## 
+
+  ProjectGroupCross:
+    Type: "AWS::IAM::Group"
+    DeletionPolicy: Delete
+    Properties:
+      GroupName: !Sub "${ProjectCode}-default-cross"
+
+  ProjectGroupCompute:
+    Type: "AWS::IAM::Group"
+    DeletionPolicy: Delete
+    Properties:
+      GroupName: !Sub "${ProjectCode}-default-compute"
+
+  ProjectGroupStorage:
+    Type: "AWS::IAM::Group"
+    DeletionPolicy: Delete
+    Properties:
+      GroupName: !Sub "${ProjectCode}-default-storage"
+
+  ProjectGroupMaster:
+    Type: "AWS::IAM::Group"
+    DeletionPolicy: Delete
+    Properties:
+      GroupName: !Sub "${ProjectCode}-master"
+
+  ##################################################################
+  #  ROLES                                                         #
+  #  Role policy size cannot exceed 10,240 characters              #
+  ################################################################## 
+
+  ProjectRole:
+    Type: AWS::IAM::Role
+    DeletionPolicy: Delete
+    Properties:
+      RoleName: !Sub "${ProjectCode}-default"
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+                - ec2.amazonaws.com
+                - dynamodb.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: "/"
+
+  ProjectRoleMaster:
+    Type: AWS::IAM::Role
+    DeletionPolicy: Delete
+    Properties:
+      RoleName: !Sub "${ProjectCode}-master"
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - support.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: "/"
+
+  ##################################################################
+  #  Project User / Access Key                                     # 
+  ################################################################## 
+
+  ProjectUser:
+    Type: AWS::IAM::User
+    Properties:
+      Groups: 
+        - !Ref ProjectGroupCross
+        - !Ref ProjectGroupCompute
+        - !Ref ProjectGroupStorage
+      Path: "/"
+
+  ProjectAccessKey:
+    Type: AWS::IAM::AccessKey
+    Properties:
+      UserName:
+        !Ref ProjectUser
+
+  ##################################################################
+  #  KMS project key                                               # 
+  ################################################################## 
+
+  ProjectKMSKey:
+    Type: AWS::KMS::Key
+    DeletionPolicy: Retain
+    Properties:
+      Enabled: true
+      KeyPolicy:       
+        Version: "2012-10-17"
+        Statement:
+          - 
+            Effect: Allow
+            Principal:
+              AWS: !GetAtt ProjectRole.Arn 
+            Action: 
+              - "kms:Describe*"
+              - "kms:Enable*"
+              - "kms:List*"
+              - "kms:Put*"
+              - "kms:Update*"
+              - "kms:Get*"
+              - "kms:Encrypt"
+              - "kms:Decrypt"
+              - "kms:ReEncrypt*"
+              - "kms:GenerateDataKey*"
+            Resource: '*'
+          - 
+            Effect: Allow
+            Principal:
+              AWS: !GetAtt ProjectRole.Arn 
+            Action: 
+              - kms:CreateGrant
+              - kms:ListGrants
+              - kms:RevokeGrants
+            Condition:
+              Bool:
+                kms:GrantIsForAWSResource: 'true'
+          - 
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Action: 
+              - "kms:*"
+            Resource: '*'
+      Tags:
+        - Key: "AppPjCode"
+          Value: !Ref ProjectCode
+        - Key: "BU"
+          Value: !Ref BusinessUnit
+        - Key: "CostCenter"
+          Value: !Ref CostCenter
+        - Key: "ChargeBack"
+          Value: !Ref ChargeBack
+
+  ProjectKMSKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub "alias/${ProjectCode}"
+      TargetKeyId: !Ref ProjectKMSKey 
+  
+  ##################################################################
+  #  Project CLOUDWATCH DASHBOARD                                  # 
+  ################################################################## 
+
+  ProjectCloudwatchDashboard:
+    Type: "AWS::CloudWatch::Dashboard"
+    DeletionPolicy: Delete
+    Properties:
+      DashboardName: !Sub "${ProjectCode}-dashboard"
+      DashboardBody: '{"widgets":[{"type":"text","x":0,"y":0,"width":6,"height":6,"properties":{"markdown":"Project Dashboard"}}]}'
+
+  ##################################################################
+  #  POLICIES                                                      # 
+  #  User policy size cannot exceed 2,048 characters               #
+  ################################################################## 
+
+  # Cross policices.
+  # Actions that do not support resource level permissions or are required to have "*"
+  CrossPolicy:
+    Type: "AWS::IAM::Policy"
+    DeletionPolicy: Delete
+    Properties: 
+      PolicyName: !Sub "${ProjectCode}-default-cross"
+      PolicyDocument:
+        Statement:
+          - 
+            Effect: Allow
+            Action: 
+              # STS (https://docs.aws.amazon.com/STS/latest/APIReference/API_Operations.html)
+              - "sts:DecodeAuthorizationMessage" # Decode IAM messages (debugging: aws sts decode-authorization-message --encoded-message encodedmessage)
+              # Autoscaling
+              - "autoscaling:*" # https://docs.aws.amazon.com/autoscaling/plans/userguide/auth-and-access-control.html
+              - "application-autoscaling:*" # https://docs.aws.amazon.com/autoscaling/application/APIReference/Welcome.html (e.g. DynamoDB Autoscaling)
+              # ELB (https://docs.aws.amazon.com/elasticloadbalancing/latest/APIReference/Welcome.html)
+              - "elasticloadbalancing:Describe*"
+              - "elasticloadbalancing:AddTags"
+              # IAM (https://docs.aws.amazon.com/IAM/latest/APIReference/Welcome.html)
+              - "iam:List*"
+              - "iam:GetInstanceProfile"
+              - "iam:GetRolePolicy"
+              - "iam:GetRole"
+              - "iam:GetPolicy"
+              - "iam:GetPolicyVersion"
+              # Tags (https://docs.aws.amazon.com/resourcegroupstagging/latest/APIReference/API_Operations.html)
+              - "tag:*"
+              # KMS (https://docs.aws.amazon.com/kms/latest/APIReference/Welcome.html)
+              - "kms:List*"
+              - "kms:Get*"
+              # CloudWatch (https://docs.aws.amazon.com/AmazonCloudWatch/latest/APIReference/Welcome.html)
+              - "cloudwatch:Get*"
+              - "cloudwatch:List*"
+              - "cloudwatch:Describe*"
+              # Logs (https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/Welcome.html)
+              - "logs:Get*"
+              - "logs:Describe*"
+              - "logs:List*"
+              - "logs:TestMetricFilter"
+              - "logs:FilterLogEvents"
+              # SSM (https://docs.aws.amazon.com/systems-manager/latest/APIReference/Welcome.html)
+              - "ssm:Describe*"
+              - "ssm:Get*"
+              - "ssm:List*"
+              # Events (https://docs.aws.amazon.com/AmazonCloudWatch/latest/events/WhatIsCloudWatchEvents.html)
+              - "events:Describe*"
+              - "events:List*"
+              - "events:TestEventPattern"
+              # Kinesis (https://docs.aws.amazon.com/kinesis/latest/APIReference/Welcome.html)
+              - "kinesis:Describe*"
+              - "kinesis:Get*"
+              - "kinesis:List*"
+              - "kinesis:AddTagsToStream"
+              - "firehose:Describe*"
+              - "firehose:List*"
+              # ES (https://docs.aws.amazon.com/elasticsearch-service/latest/developerguide/es-configuration-api.html)
+              - "es:Describe*"
+              - "es:List*"
+              - "es:AddTags"
+              # SNS (https://docs.aws.amazon.com/sns/latest/api/Welcome.html)
+              - "sns:List*"
+              - "sns:Get*"            
+              # Lambda (https://docs.aws.amazon.com/lambda/latest/dg/lambda-auth-and-access-control.html)
+              - "lambda:List*"
+              - "lambda:GetAccountSettings"
+              - "lambda:GetEventSourceMapping"
+              - "lambda:CreateEventSourceMapping"
+              - "lambda:TagResource"
+              - "lambda:UntagResource"
+              # States (https://docs.aws.amazon.com/step-functions/latest/apireference/Welcome.html)
+              - "states:Describe*"
+              - "states:List*"
+              - "states:GetExecutionHistory"
+              # EC2 
+              - "ec2:Describe*"  # Required so you don't get EC2 DASHBOARD error messages (read-only)
+              - "ec2:CreateTags"
+              - "ec2:CreateSecurityGroup"  # will be able to create SG with only default in/out
+              # EMR (https://docs.aws.amazon.com/emr/latest/APIReference/Welcome.html)
+              - "elasticmapreduce:List*"
+              - "elasticmapreduce:Describe*"
+              - "elasticmapreduce:ViewEventsFromAllClustersInConsole"
+              - "elasticmapreduce:AddTags"
+              # DataPipeline
+              - "datapipeline:Describe*"
+              - "datapipeline:GetPipelineDefinition"
+              - "datapipeline:ListPipelines"
+              - "datapipeline:QueryObjects"    
+              # SQS (https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/Welcome.html)
+              - "sqs:Get*"
+              - "sqs:List*"
+              - "sqs:TagQueue"
+              # S3 (for S3 dashboard/list to work (read only))
+              - "s3:ListAllMyBuckets"
+              - "s3:ListBucketByTags"
+              - "s3:GetBucket*"
+              - "s3:GetAccelerateConfiguration"
+              # DynamoDB (https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/api-permissions-reference.html)
+              - "dynamodb:Describe*"
+              - "dynamodb:List*"    
+              # SimpleDB (https://docs.aws.amazon.com/AmazonSimpleDB/latest/DeveloperGuide/SDB_API.html)
+              - "sdb:Select"
+              - "sdb:List*"
+              - "sdb:Get*"
+              # RDS (https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Using_the_Query_API.html)
+              - "rds:Describe*"
+              - "rds:ListTagsForResource"
+              # RedShift (https://docs.aws.amazon.com/redshift/latest/APIReference/Welcome.html)
+              - "redshift:Describe*"
+              - "redshift:ViewQueriesInConsole"
+              - "redshift:CreateTags"
+              # Athena (https://docs.aws.amazon.com/athena/latest/APIReference/Welcome.html)
+              - "athena:GetCatalogs"
+              - "athena:List*"
+            Resource: "*" 
+          - 
+            Effect: Allow
+            Action: 
+              # IAM
+              - "iam:PassRole"
+            Resource: !GetAtt ProjectRole.Arn  
+          -
+            Effect: Deny
+            Action:
+              # DynamoDB
+              - "dynamodb:PurchaseReservedCapacityOfferings"
+              # Cloudwatch
+              - "cloudwatch:Delete*"
+            Resource: "*"
+        Version: '2012-10-17'
+      Roles:
+        - !Ref ProjectRole
+      Groups:
+        - !Ref ProjectGroupCross
+
+  # Support
+  # TODO: ask support :) how to restrict access to certain types of cases.
+  SupportPolicy:
+    Type: "AWS::IAM::Policy"
+    DeletionPolicy: Delete
+    Properties: 
+      PolicyName: !Sub "${ProjectCode}-master-support"
+      PolicyDocument:
+        Statement:
+          - 
+            Effect: Allow
+            Action: 
+              - "support:*" # https://docs.aws.amazon.com/awssupport/latest/user/getting-started.html#accessing-support
+            Resource: "*"
+        
+        Version: '2012-10-17'
+      Roles:
+        - !Ref ProjectRoleMaster
+      Groups:
+        - !Ref ProjectGroupMaster
+  
+
+  ###############################################################################################
+  # Conditions related policies                                                                 #
+  # https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_actionsconditions.html  #
+  ###############################################################################################
+
+  # SNS / Cloudwatch / Logs / 
+  IntegrationPolicy:
+    Type: "AWS::IAM::Policy"
+    DeletionPolicy: Delete
+    Properties: 
+      PolicyName: !Sub "${ProjectCode}-default-sns"
+      PolicyDocument:
+        Statement:
+          # SNS
+          - 
+            Effect: Allow
+            Action: 
+              - "sns:*"
+            Resource: 
+              - !Sub "arn:aws:sns:${AWS::Region}:${AWS::AccountId}:${NamingCode}-*"
+          # Cloudwatch
+          # TODO: https://aws.amazon.com/es/blogs/mt/keeping-cloudwatch-dashboards-up-to-date-using-aws-lambda/
+
+
+          # Cloudwatch Logs
+          - 
+            Effect: Allow
+            Action: 
+              - "logs:*"
+            Resource: 
+              - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:${NamingCode}-*"
+                 
+        Version: '2012-10-17'
+      Roles:
+        - !Ref ProjectRole
+      Groups:
+        - !Ref ProjectGroupCross
+
+  # S3 / DynamoDB
+  StoragePolicy:
+    Type: "AWS::IAM::Policy"
+    DeletionPolicy: Delete
+    Properties: 
+      PolicyName: !Sub "${ProjectCode}-default-storage"
+      PolicyDocument:
+        Statement:
+          # S3
+          - 
+            Effect: Deny
+            Action: "s3:CreateBucket"
+            Resource: !Sub "arn:aws:s3:::${NamingCode}-*"
+            Condition:
+              StringNotLike: 
+                s3:LocationConstraint: !Sub ${AWS::Region}
+          - 
+            Effect: Allow
+            Action: "s3:*"
+            Resource: !Sub "arn:aws:s3:::${NamingCode}-*"
+          
+          # DynamoDB
+          # https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/api-permissions-reference.html
+          - 
+            Effect: Allow
+            Action: 
+              - "dynamodb:*"             
+            Resource: 
+              - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${NamingCode}-*"      
+          -
+            Effect: Allow
+            Action:
+              - "iam:GetRole"
+              - "iam:PassRole"
+            Resource: !Sub "arn:aws:iam::${AWS::AccountId}:role/service-role/DynamoDBAutoscaleRole"
+          -
+            Effect: Allow
+            Action:
+              - "sns:CreateTopic"
+            Resource: 
+              - !Sub "arn:aws:sns:${AWS::Region}:${AWS::AccountId}:dynamodb"
+
+        Version: '2012-10-17'
+      Roles:
+        - !Ref ProjectRole
+      Groups:
+        - !Ref ProjectGroupStorage
+
+  # Lambda / EC2 / EMR / Steps
+  ComputePolicy:
+    Type: "AWS::IAM::Policy"
+    DeletionPolicy: Delete
+    Properties: 
+      PolicyName: !Sub "${ProjectCode}-default-compute"
+      PolicyDocument:
+        Statement:
+          # Lambda
+          # https://docs.aws.amazon.com/lambda/latest/dg/lambda-auth-and-access-control.html 
+          - 
+            Effect: Allow
+            Action: "lambda:*"
+            Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${NamingCode}-*"    
+
+          # StepFunctions
+          # https://docs.aws.amazon.com/IAM/latest/UserGuide/list_states.html
+          -
+            Effect: Allow
+            Action: "states:*"
+            Resource:
+              - !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:execution:${NamingCode}-*" 
+              - !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:activity:${NamingCode}-*" 
+          # EMR
+          # https://docs.aws.amazon.com/IAM/latest/UserGuide/list_elasticmapreduce.html
+          - 
+            Effect: Allow
+            Action:
+              - "elasticmapreduce:*"
+            Resource: "*"
+            Condition:
+              StringEquals: 
+                  elasticmapreduce:ResourceTag/AppPjCode: !Sub ${ProjectCode}
+                  elasticmapreduce:ResourceTag/BU: !Sub ${BusinessUnit}
+                  elasticmapreduce:ResourceTag/CostCenter: !Sub ${CostCenter}
+                  elasticmapreduce:ResourceTag/ChargeBack: !Sub ${ChargeBack}
+
+          # EC2
+          # Modify In/Out only on project VPC security groups.
+          - 
+            Effect: Allow
+            Action:
+              - "ec2:DeleteSecurityGroup"
+              - "ec2:AuthorizeSecurityGroup*"
+              - "ec2:RevokeSecurityGroup*"
+            Resource: 
+              - !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:security-group/*"
+            Condition:
+              StringEquals: 
+                  # project tags restriction (only allowed to modify project tagged security groups)
+                  ec2:ResourceTag/AppPjCode: !Sub ${ProjectCode}
+                  ec2:ResourceTag/BU: !Sub ${BusinessUnit}
+                  ec2:ResourceTag/CostCenter: !Sub ${CostCenter}
+                  ec2:ResourceTag/ChargeBack: !Sub ${ChargeBack}
+                  # project VPC restriction                              
+                  ec2:vpc: !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:vpc/${ProjectVPCId}" 
+
+        
+          # ec2:RunInstances
+          ################################
+
+          # no restricted (resources)
+          - 
+            Effect: Allow 
+            Action: 
+              - "ec2:RunInstances"
+            Resource: 
+              - !Sub "arn:aws:ec2:${AWS::Region}::image/ami-*" # Allow only run amazon AMIs.
+              - !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:elastic-gpu/*"
+              - !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:key-pair/*"
+              - !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:launch-template/*"
+              - !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:placement-group/*"
+              - !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:volume/*"
+              - !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:network-interface/*"         
+              - !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:snapshot/*"  
+              - !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:security-group/*"
+
+          # TAG restricted
+          -
+            Effect: Allow 
+            Action: 
+              - "ec2:RunInstances"  
+            Resource: 
+              - !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/*"       
+            Condition:
+              StringEquals:
+                  aws:RequestTag/AppPjCode: !Sub ${ProjectCode}
+                  aws:RequestTag/BU: !Sub ${BusinessUnit}
+                  aws:RequestTag/CostCenter: !Sub ${CostCenter}
+                  aws:RequestTag/ChargeBack: !Sub ${ChargeBack}
+              ForAllValues:StringEquals:
+                aws:TagKeys:
+                  - AppPjCode
+                  - BU
+                  - CostCenter
+                  - ChargeBack 
+
+          # VPC restricted
+          -
+            Effect: Allow 
+            Action: 
+              - "ec2:RunInstances"  
+            Resource: 
+              - !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:subnet/*"
+            Condition:
+              StringEquals: # project VPC restriction                              
+                  ec2:vpc: !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:vpc/${ProjectVPCId}"   
+          
+
+          # Start/Stop Instances
+          ################################
+
+          # Tag restricted
+          - 
+            Effect: Allow 
+            Action: 
+              - "ec2:TerminateInstances"
+              - "ec2:StopInstances"
+              - "ec2:StartInstances"
+              - "ec2:RebootInstances"
+            Resource: 
+              - !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/*"
+            Condition:
+              StringEquals:  # project tags restriction
+                  ec2:ResourceTag/AppPjCode: !Sub ${ProjectCode}
+                  ec2:ResourceTag/BU: !Sub ${BusinessUnit}
+                  ec2:ResourceTag/CostCenter: !Sub ${CostCenter}
+                  ec2:ResourceTag/ChargeBack: !Sub ${ChargeBack}
+
+          # Volumes
+          ################################
+
+          # Tag restricted
+          - 
+            Effect: Allow 
+            Action: 
+              - "ec2:AttachVolume"
+              - "ec2:DetachVolume"         
+            Resource: 
+              - !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/*"
+              - !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:volume/*"
+            Condition:
+              StringEquals:  # project tags restriction
+                  ec2:ResourceTag/AppPjCode: !Sub ${ProjectCode}
+                  ec2:ResourceTag/BU: !Sub ${BusinessUnit}
+                  ec2:ResourceTag/CostCenter: !Sub ${CostCenter}
+                  ec2:ResourceTag/ChargeBack: !Sub ${ChargeBack}  
+          - 
+            Effect: Allow 
+            Action: 
+              - "ec2:CreateVolume"
+            Resource: 
+              - !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:volume/*"
+            Condition:
+              StringEquals:  # project tags restriction
+                  aws:RequestTag/AppPjCode: !Sub ${ProjectCode}
+                  aws:RequestTag/BU: !Sub ${BusinessUnit}
+                  aws:RequestTag/CostCenter: !Sub ${CostCenter}
+                  aws:RequestTag/ChargeBack: !Sub ${ChargeBack} 
+              ForAllValues:StringEquals:
+                aws:TagKeys:
+                  - AppPjCode
+                  - BU
+                  - CostCenter
+                  - ChargeBack
+          - 
+            Effect: Allow 
+            Action: 
+              - "ec2:DeleteVolume"      
+            Resource: 
+              - !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:volume/*"
+            Condition:
+              StringEquals:  # project tags restriction
+                  ec2:ResourceTag/AppPjCode: !Sub ${ProjectCode}
+                  ec2:ResourceTag/BU: !Sub ${BusinessUnit}
+                  ec2:ResourceTag/CostCenter: !Sub ${CostCenter}
+                  ec2:ResourceTag/ChargeBack: !Sub ${ChargeBack}    
+
+        Version: '2012-10-17'
+      Roles:
+        - !Ref ProjectRole
+      Groups:
+        - !Ref ProjectGroupCompute
+
+
+Outputs:
+
+  AccessKeyForProject:
+    Value:
+      !Ref ProjectAccessKey
+
+  SecretKeyForProject:
+    Value: !GetAtt ProjectAccessKey.SecretAccessKey
+
+
+Mappings:
+  RegionMap:
+    ap-northeast-1:
+      S3hostedzoneID: "Z2M4EHUR26P7ZW"
+      websiteendpoint: "s3-website-ap-northeast-1.amazonaws.com"
+    ap-northeast-2:
+      S3hostedzoneID: "Z3W03O7B5YMIYP"
+      websiteendpoint: "s3-website.ap-northeast-2.amazonaws.com"
+    ap-south-1:
+      S3hostedzoneID: "Z11RGJOFQNVJUP"
+      websiteendpoint: "s3-website.ap-south-1.amazonaws.com"
+    ap-southeast-1:
+      S3hostedzoneID: "Z3O0J2DXBE1FTB"
+      websiteendpoint: "s3-website-ap-southeast-1.amazonaws.com"
+    ap-southeast-2:
+      S3hostedzoneID: "Z1WCIGYICN2BYD"
+      websiteendpoint: "s3-website-ap-southeast-2.amazonaws.com"
+    eu-central-1:
+      S3hostedzoneID: "Z21DNDUVLTQW6Q"
+      websiteendpoint: "s3-website.eu-central-1.amazonaws.com"
+    eu-west-1:
+      S3hostedzoneID: "Z1BKCTXD74EZPE"
+      websiteendpoint: "s3-website-eu-west-1.amazonaws.com"
+    sa-east-1:
+      S3hostedzoneID: "Z7KQH4QJS55SO"
+      websiteendpoint: "s3-website-sa-east-1.amazonaws.com"
+    us-east-1:
+      S3hostedzoneID: "Z3AQBSTGFYJSTF"
+      websiteendpoint: "s3-website-us-east-1.amazonaws.com"
+    us-east-2:
+      S3hostedzoneID: "Z2O1EMRO9K5GLX"
+      websiteendpoint: "s3-website.us-east-2.amazonaws.com"
+    us-west-1:
+      S3hostedzoneID: "Z2F56UZL2M1ACD"
+      websiteendpoint: "s3-website-us-west-1.amazonaws.com"
+    us-west-2:
+      S3hostedzoneID: "Z3BJ6K6RIION7M"
+      websiteendpoint: "s3-website-us-west-2.amazonaws.com"

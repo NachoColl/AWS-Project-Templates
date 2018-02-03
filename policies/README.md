@@ -1,0 +1,1 @@
+Not all the AWS cloud service can be used locally to dev. For that reason we need to setup a set of policies so developers can access the system.
