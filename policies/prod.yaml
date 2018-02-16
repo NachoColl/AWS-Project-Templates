@@ -1,0 +1,307 @@
+---
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: >
+  Pink-Elephant PROD policies.
+
+Resources:
+
+  ProjectGroup:
+    Type: "AWS::IAM::Group"
+    DeletionPolicy: Delete
+    Properties:
+      GroupName: !Sub "intelds-legacy-default"
+
+  ProjectRole:
+    Type: AWS::IAM::Role
+    DeletionPolicy: Delete
+    Properties:
+      RoleName: !Sub "intelds-legacy-default"
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+                - ec2.amazonaws.com
+                - dynamodb.amazonaws.com
+                - !Sub states.${AWS::Region}.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: "/"
+
+  ProjectUser:
+    Type: AWS::IAM::User
+    Properties:
+      Groups: 
+        - !Ref ProjectGroup
+      Path: "/"
+
+  ProjectAccessKey:
+    Type: AWS::IAM::AccessKey
+    Properties:
+      UserName:
+        !Ref ProjectUser
+
+
+  # https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_access-level_write.html
+  
+  ProductionPolicy:
+    Type: "AWS::IAM::Policy"
+    DeletionPolicy: Delete
+    Properties: 
+      PolicyName: "intelds-legacy"
+      PolicyDocument:
+        Statement:
+         
+          # ALLOWS ALL
+          - 
+            Effect: Allow
+            Action: 
+              # STS (https://docs.aws.amazon.com/STS/latest/APIReference/API_Operations.html)
+              - "sts:DecodeAuthorizationMessage" # Decode IAM messages (debugging: aws sts decode-authorization-message --encoded-message encodedmessage)
+              # Autoscaling
+              - "autoscaling:Describe*" # https://docs.aws.amazon.com/autoscaling/plans/userguide/auth-and-access-control.html
+              - "application-autoscaling:Describe*" # https://docs.aws.amazon.com/autoscaling/application/APIReference/Welcome.html (e.g. DynamoDB Autoscaling)
+              # ELB (https://docs.aws.amazon.com/elasticloadbalancing/latest/APIReference/Welcome.html)
+              - "elasticloadbalancing:Describe*"
+              - "elasticloadbalancing:AddTags"
+              # IAM (https://docs.aws.amazon.com/IAM/latest/APIReference/Welcome.html)
+              - "iam:List*"
+              - "iam:GetInstanceProfile"
+              - "iam:GetRolePolicy"
+              - "iam:GetRole"
+              - "iam:GetPolicy"
+              - "iam:GetPolicyVersion"
+              # Cloudformation (https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/Welcome.html)
+              - "cloudformation:Describe*"
+              - "cloudformation:Get*"
+              - "cloudformation:List*"
+              - "cloudformation:ValidateTemplate"
+              # Tags (https://docs.aws.amazon.com/resourcegroupstagging/latest/APIReference/API_Operations.html)
+              - "tag:*"
+              # KMS (https://docs.aws.amazon.com/kms/latest/APIReference/Welcome.html)
+              - "kms:List*"
+              - "kms:Get*"
+              # CloudWatch (https://docs.aws.amazon.com/AmazonCloudWatch/latest/APIReference/Welcome.html)
+              - "cloudwatch:Get*"
+              - "cloudwatch:List*"
+              - "cloudwatch:Describe*"
+              - "cloudwatch:Put*"              
+              # Logs (https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/Welcome.html)
+              - "logs:Get*"
+              - "logs:Describe*"
+              - "logs:List*"
+              - "logs:TestMetricFilter"
+              - "logs:FilterLogEvents"
+              # SSM (https://docs.aws.amazon.com/systems-manager/latest/APIReference/Welcome.html)
+              - "ssm:Describe*"
+              - "ssm:Get*"
+              - "ssm:List*"
+              # Events (https://docs.aws.amazon.com/AmazonCloudWatch/latest/events/WhatIsCloudWatchEvents.html)
+              - "events:Describe*"
+              - "events:List*"
+              - "events:TestEventPattern"
+              # Kinesis (https://docs.aws.amazon.com/kinesis/latest/APIReference/Welcome.html)
+              - "kinesis:Describe*"
+              - "kinesis:Get*"
+              - "kinesis:List*"
+              - "kinesis:AddTagsToStream"
+              - "firehose:Describe*"
+              - "firehose:List*"
+              # ES (https://docs.aws.amazon.com/elasticsearch-service/latest/developerguide/es-configuration-api.html)
+              - "es:Describe*"
+              - "es:List*"
+              - "es:AddTags"
+              # SNS (https://docs.aws.amazon.com/sns/latest/api/Welcome.html)
+              - "sns:List*"
+              - "sns:Get*"            
+              # Lambda (https://docs.aws.amazon.com/lambda/latest/dg/lambda-auth-and-access-control.html)
+              - "lambda:List*"
+              - "lambda:GetAccountSettings"
+              - "lambda:GetEventSourceMapping"
+              - "lambda:CreateEventSourceMapping"
+              - "lambda:TagResource"
+              - "lambda:UntagResource"
+              # States (https://docs.aws.amazon.com/step-functions/latest/apireference/Welcome.html)
+              - "states:Describe*"
+              - "states:List*"
+              - "states:CreateStateMachine"
+              - "states:CreateActivity"
+              - "states:GetExecutionHistory"
+              # EC2 
+              - "ec2:Describe*"  # Required so you don't get EC2 DASHBOARD error messages (read-only)
+              - "ec2:CreateTags"
+              - "ec2:CreateSecurityGroup"  # will be able to create SG with only default in/out
+              # EMR (https://docs.aws.amazon.com/emr/latest/APIReference/Welcome.html)
+              - "elasticmapreduce:List*"
+              - "elasticmapreduce:Describe*"
+              - "elasticmapreduce:ViewEventsFromAllClustersInConsole"
+              - "elasticmapreduce:AddTags"
+              # DataPipeline
+              - "datapipeline:Describe*"
+              - "datapipeline:GetPipelineDefinition"
+              - "datapipeline:ListPipelines"
+              - "datapipeline:QueryObjects"    
+              # SQS (https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/Welcome.html)
+              - "sqs:Get*"
+              - "sqs:List*"
+              - "sqs:TagQueue"
+              # S3 (for S3 dashboard/list to work (read only))
+              - "s3:ListAllMyBuckets"
+              - "s3:ListBucketByTags"
+              - "s3:GetBucket*"
+              - "s3:GetAccelerateConfiguration"
+              # DynamoDB (https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/api-permissions-reference.html)
+              - "dynamodb:Describe*"
+              - "dynamodb:List*"    
+              # SimpleDB (https://docs.aws.amazon.com/AmazonSimpleDB/latest/DeveloperGuide/SDB_API.html)
+              - "sdb:Select"
+              - "sdb:List*"
+              - "sdb:Get*"
+              # RDS (https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Using_the_Query_API.html)
+              - "rds:Describe*"
+              - "rds:List*"
+              - "rds:AddTagsToResource"
+              # RedShift (https://docs.aws.amazon.com/redshift/latest/APIReference/Welcome.html)
+              - "redshift:Describe*"
+              - "redshift:ViewQueriesInConsole"
+              - "redshift:CreateTags"
+              # Athena (https://docs.aws.amazon.com/athena/latest/APIReference/Welcome.html)
+              - "athena:GetCatalogs"
+              - "athena:List*"
+            Resource: "*" 
+          - 
+            Effect: Allow
+            Action: 
+              # IAM
+              - "iam:PassRole"
+            Resource: !GetAtt ProjectRole.Arn  
+         
+          ###########################################################
+
+          # cloudwatch
+          -
+            Effect: Deny
+            Action:
+              - "cloudwatch:Delete*"
+            Resource: "*"
+
+          -
+            Effect: Allow
+            Action: 
+              - "cloudwatch:*"
+            Resource: 
+              - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:*inteldata*"
+              - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:*intelds*"
+
+          # Cloudwatch Logs
+          - 
+            Effect: Allow
+            Action: 
+              - "logs:*"
+            Resource: 
+              - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:*inteldata*"
+              - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:*intelds*"
+
+          # KMS
+          -
+            Effect: Deny
+            Action:
+              - "kms:ScheduleKeyDeletion"
+              - "kms:UntagResource"
+              - "kms:UpdateAlias"
+              - "kms:PutKeyPolicy"
+            Resource: "*"
+
+          -
+            Effect: Allow
+            Action:
+              - "kms:*"
+            Resource: 
+              - !Sub "arn:aws:kms::${AWS::Region}:${AWS::AccountId}:key/959a9675-248a-40a4-a6d3-13a08a44ce97"
+              - !Sub "arn:aws:kms::${AWS::Region}:${AWS::AccountId}:key/f5243547-b83c-4b49-ade7-f3c62a81f3b0"
+
+          # S3
+          - 
+            Effect: Deny
+            Action: 
+              - "s3:CreateBucket"
+              - "s3:DeleteBucket"
+              - "s3:DeleteBucketWebsite"
+              - "s3:PutBucketCORS"
+              - "s3:PutBucketWebsite"
+              - "s3:PutIpConfiguration"
+              - "s3:PutLifecycleConfiguration"
+            Resource: "*"
+
+          - 
+            Effect: Allow
+            Action: "s3:*"
+            Resource: 
+              - "arn:aws:s3:::inteldsprod"
+              - "arn:aws:s3:::inteldsprod/*"
+              - "arn:aws:s3:::inteldsqa"
+              - "arn:aws:s3:::inteldsqa/*"
+              - "arn:aws:s3:::inteldsprodlogs"
+              - "arn:aws:s3:::inteldsprodlogs/*"
+              - "arn:aws:s3:::inteldatastoreprod"
+              - "arn:aws:s3:::inteldatastoreprod/*"
+              - "arn:aws:s3:::inteldatastoreqa"
+              - "arn:aws:s3:::inteldatastoreqa/*"
+
+          # Lambda
+          # https://docs.aws.amazon.com/lambda/latest/dg/lambda-auth-and-access-control.html 
+          -
+            Effect: Deny
+            Action:
+              - "lambda:UpdateFunctionCode"
+              - "lambda:UpdateFunctionConfiguration"
+              - "lambda:PublishVersion"
+              - "lambda:CreateFunction"
+              - "lambda:DeleteAlias"
+              - "lambda:DeleteFunction"
+            Resource: "*"
+
+          - 
+            Effect: Allow
+            Action: "lambda:*"
+            Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:inteldata*"             
+
+          # DynamoDB 
+          -
+            Effect: Deny
+            Action:
+              - "dynamodb:PurchaseReservedCapacityOfferings"
+              - "dynamodb:DeleteTable"
+            Resource: "*"
+
+          - 
+            Effect: Allow
+            Action: 
+              - "dynamodb:*"             
+            Resource: 
+               - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/inteldatastoreclusterprod"
+               - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/inteldatastoreclusterqa" 
+               - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/inteldatastoreclusterspreqa" 
+               - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/inteldatastoreclustersqa" 
+               - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/inteldatastoremetadataprod" 
+               - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/inteldatastoremetadataqa" 
+               - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/inteldatastoremetapreqa" 
+               - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/inteldatastoremetaqa" 
+               - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/inteldatastoremetastable" 
+               - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/inteldatastoretaskprod" 
+               - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/inteldatastoretaskqa" 
+               - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/inteldatastoretaskspreqa" 
+               - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/inteldatastoretasksqa" 
+               - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/inteldatastoretasksstable" 
+          
+         
+
+        Version: '2012-10-17'
+      Roles:
+        - !Ref ProjectRole
+      Groups:
+        - !Ref ProjectGroup
+             
+
