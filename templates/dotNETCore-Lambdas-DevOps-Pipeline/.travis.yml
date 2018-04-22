@@ -1,0 +1,23 @@
+language: csharp
+mono: none
+dotnet: 2.1.103
+
+branches:
+  except:
+    # this is required to avoid building tags
+    - /^v?\d+\.\d+\.\d+(\w*\W*)*$/
+install:
+  - dotnet restore $TRAVIS_BUILD_DIR/test/
+script: 
+  - dotnet test $TRAVIS_BUILD_DIR/test/
+before_deploy:
+  - pip install awscli --upgrade --user
+deploy:
+  - provider: script
+    skip_cleanup: true
+    script: bash $TRAVIS_BUILD_DIR/deploy/.deploy.sh staging debug
+    on: dev
+  - provider: script
+    skip_cleanup: true
+    script: bash $TRAVIS_BUILD_DIR/deploy/.deploy.sh prod release
+    on: master

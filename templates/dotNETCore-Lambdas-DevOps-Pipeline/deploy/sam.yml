@@ -1,0 +1,83 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: 'AWS::Serverless-2016-10-31'
+Description: nWAY API
+
+Parameters:
+
+  PackageFileName:
+    Type: String
+    Description: The package file name (e.g. 'mySourceCode.zip')
+
+Globals:
+  Function:
+    Runtime: dotnetcore2.0
+    CodeUri: 
+      Bucket: nway-deploys
+      Key: !Sub "api/${PackageFileName}"     
+    Tracing: Active
+    Timeout: 60
+    Tags: 
+      appcode: nway
+          
+Resources:
+
+  
+  #################################################################################
+  # API Gateway definition                                                        #
+  #################################################################################
+
+  nWAYApi: 
+    Type: "AWS::ApiGateway::RestApi"
+    Properties:
+      Description: "nWAY API"
+      Name: "nway-api"
+
+
+  #################################################################################
+  # deployment 'environments'                                                     #
+  #   staging                                                                     #
+  #   prod                                                                        #
+  #################################################################################
+
+  # staging deployment
+  Staging:
+    Type: 'AWS::ApiGateway::Stage'
+    DependsOn: nWAYApi
+    Properties:
+      StageName: staging
+      Description: API Staging
+      RestApiId: !Ref nWAYApi
+      DeploymentId: !Ref StagingDeployment
+      Variables:
+        lambdaAlias: staging
+  
+  # prod deployment
+  Prod:
+    Type: 'AWS::ApiGateway::Stage'
+    DependsOn: nWAYApi
+    Properties:
+      StageName: prod
+      Description: API Production
+      RestApiId: !Ref nWAYApi
+      DeploymentId: !Ref ProdDeployment
+      Variables:
+        lambdaAlias: prod
+
+  # do not delete this mark
+  # deploy will use it to inject cloudformation resources.
+
+  # @INJECT
+
+Outputs:
+
+  nWAYApiId:
+    Description: API Gateway ID
+    Value: !Ref nWAYApi
+    Export:
+      Name: !Sub "${AWS::StackName}-ApiGatewayId"
+
+  nWAYApiRootResourceId:
+    Description: API Gateway ID
+    Value: !GetAtt nWAYApi.RootResourceId
+    Export:
+      Name: !Sub "${AWS::StackName}-ApiGatewayRootResourceId"
