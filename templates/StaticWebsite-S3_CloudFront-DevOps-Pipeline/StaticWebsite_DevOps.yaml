@@ -1,0 +1,557 @@
+---
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: >
+  DevOps template for Static Website.
+
+Parameters:
+
+  # All the resources will contain this project code as TAG
+  ProjectCode: # http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/Using_Tags.html
+    Type: String
+    Description: "Project code name"
+    MinLength: 2
+    MaxLength: 20
+    AllowedPattern: "[a-z0-9]+"
+    ConstraintDescription: "Provide a valid project code name using only lowercase letters and numbers."
+
+  # The domain name of the website we're building
+  DomainName:
+    Type: String
+    Description: "Domain name wihout the initial 'www.' (e.g. example.com)"
+    MinLength: 4
+    MaxLength: 253
+    AllowedPattern: "[a-z0-9]+[-.a-z0-9]*(\\.[a-z][a-z]+)+"
+    ConstraintDescription: "Provide a valid domain name using only lowercase letters, numbers, and dash (-)."
+
+  # Email address to receive SNS approval requests
+  NotificationEmail:
+    Type: String
+    Description: "Email address to receive approval requests"
+    MinLength: 6
+    AllowedPattern: ".+@[a-z0-9]+[-.a-z0-9]*(\\.[a-z][a-z]+)+"
+    ConstraintDescription: "Provide a valid email address"
+
+Resources:
+
+  ##################################################################
+  #  Project Repo                                                  #
+  ##################################################################
+
+  GitRepo:
+     Type: AWS::CodeCommit::Repository
+     DeletionPolicy: Delete
+     Properties:
+       RepositoryDescription: !Sub "Git repository for ${DomainName}"
+       RepositoryName: !Sub "${ProjectCode}.git.${DomainName}"
+
+
+  ##################################################################
+  #  Static Website Resources:                                     #
+  #  Route53 (DNS) > CloudFront with Certificate => S3             #
+  ##################################################################
+
+  # S3 buckets
+  ###########################
+
+  # Bucket for TEST Environment content.
+  SiteTestBucket:
+      Type: "AWS::S3::Bucket"
+      DeletionPolicy: Delete
+      Properties:
+        BucketName: !Sub "test.${DomainName}"
+        AccessControl: PublicRead
+        WebsiteConfiguration:
+          IndexDocument: index.html
+          ErrorDocument: error.html
+        Tags:
+           -
+            Key: "project"
+            Value: !Ref ProjectCode
+
+  # Bucket for PRODUCTION Environment content.
+  SiteBucket:
+      Type: "AWS::S3::Bucket"
+      DeletionPolicy: Delete
+      Properties:
+        BucketName: !Sub "prod.${DomainName}"
+        AccessControl: PublicRead
+        WebsiteConfiguration:
+          IndexDocument: index.html
+          ErrorDocument: error.html
+        Tags:
+           -
+            Key: "project"
+            Value: !Ref ProjectCode
+
+  # https certificates
+  ###########################
+
+
+  # Certificate for HTTPS accesss through CloudFront for TEST Environment.
+  CertificateTestEnvironment:
+    Type: "AWS::CertificateManager::Certificate"
+    DeletionPolicy: Delete
+    Properties:
+      DomainName: !Sub "test.${DomainName}"
+      Tags:
+         -
+          Key: "project"
+          Value: !Ref ProjectCode
+
+  # Certificate for HTTPS accesss through CloudFront for PRODUCTION Environment.
+  Certificate:
+    Type: "AWS::CertificateManager::Certificate"
+    DeletionPolicy: Delete
+    Properties:
+      DomainName: !Ref DomainName
+      SubjectAlternativeNames:
+        - !Sub "www.${DomainName}"
+      Tags:
+         -
+          Key: "project"
+          Value: !Ref ProjectCode
+
+
+  # CloudFront
+  ###########################
+
+  # Distribution of TEST Environment content.
+  CloudFrontTestDistribution:
+      Type: "AWS::CloudFront::Distribution"
+      DeletionPolicy: Delete
+      DependsOn:
+        - SiteTestBucket
+        - Certificate
+      Properties:
+        DistributionConfig:
+          Enabled: true
+          Aliases:
+            - !Sub "test.${DomainName}"
+          DefaultRootObject: index.html
+          PriceClass: PriceClass_All
+          Origins:
+            -
+              DomainName: !Join ["", ["test.", !Ref DomainName, ".", !FindInMap [RegionMap, !Ref "AWS::Region", websiteendpoint]]]
+              Id: S3Origin
+              CustomOriginConfig:
+                HTTPPort: 80
+                HTTPSPort: 443
+                OriginProtocolPolicy: http-only
+          DefaultCacheBehavior:
+            TargetOriginId: S3Origin
+            AllowedMethods:
+              - GET
+              - HEAD
+            Compress: true
+            DefaultTTL: 31536000  # we use cloudfront invalidation to refresh.
+            MinTTL: 31536000      # we use cloudfront invalidation to refresh.
+            ForwardedValues:
+              QueryString: false
+              Cookies:
+               Forward: none
+            ViewerProtocolPolicy: redirect-to-https
+          ViewerCertificate:
+            AcmCertificateArn: !Ref CertificateTestEnvironment
+            SslSupportMethod: sni-only
+        Tags:
+         -
+          Key: "project"
+          Value: !Ref ProjectCode
+
+
+  # Distribution of PRODUCTION Environment content.
+  CloudFrontDistribution:
+      Type: "AWS::CloudFront::Distribution"
+      DeletionPolicy: Delete
+      DependsOn:
+        - SiteBucket
+        - Certificate
+      Properties:
+        DistributionConfig:
+          Enabled: true
+          Aliases:
+            - !Ref DomainName
+            - !Sub "www.${DomainName}"
+          DefaultRootObject: index.html
+          PriceClass: PriceClass_All
+          Origins:
+            -
+              DomainName: !Join ["", ["prod.",!Ref DomainName, ".", !FindInMap [RegionMap, !Ref "AWS::Region", websiteendpoint]]]
+              Id: S3Origin
+              CustomOriginConfig:
+                HTTPPort: 80
+                HTTPSPort: 443
+                OriginProtocolPolicy: http-only
+          DefaultCacheBehavior:
+            TargetOriginId: S3Origin
+            AllowedMethods:
+              - GET
+              - HEAD
+            Compress: true
+            DefaultTTL: 31536000 # we use cloudfront invalidation to refresh.
+            MinTTL: 31536000 # we use cloudfront invalidation to refresh.
+            ForwardedValues:
+              QueryString: false
+              Cookies:
+               Forward: none
+            ViewerProtocolPolicy: redirect-to-https
+          ViewerCertificate:
+            AcmCertificateArn: !Ref Certificate
+            SslSupportMethod: sni-only
+        Tags:
+         -
+          Key: "project"
+          Value: !Ref ProjectCode
+
+  # Route53
+  ###########################
+
+  # Hosted zone
+  Route53HostedZone:
+      Type: "AWS::Route53::HostedZone"
+      DeletionPolicy: Delete
+      Properties:
+        HostedZoneConfig:
+          Comment: !Sub "Created by CloudFormation stack: ${AWS::StackName}"
+        Name: !Ref DomainName
+
+  # DNSs
+  Route53RecordSetGroup:
+      Type: "AWS::Route53::RecordSetGroup"
+      DeletionPolicy: Delete
+      DependsOn:
+        - Route53HostedZone
+      Properties:
+        HostedZoneName: !Sub "${DomainName}."
+        RecordSets:
+          - Name: !Sub "${DomainName}."
+            Type: A
+            # Resolve to CloudFront distribution
+            AliasTarget:
+              HostedZoneId: Z2FDTNDATAQYW2 # http://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-route53-aliastarget.html
+              DNSName: !GetAtt CloudFrontDistribution.DomainName
+          - Name: !Sub "test.${DomainName}."
+            Type: A
+            # Resolve to CloudFront distribution
+            AliasTarget:
+              HostedZoneId: Z2FDTNDATAQYW2 # http://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-route53-aliastarget.html
+              DNSName: !GetAtt CloudFrontDistribution.DomainName
+
+  ##################################################################
+  #  Static Website CODEPIPELINE                                   #
+  #                                                                #
+  ##################################################################
+
+  # S3 buckets
+  ###########################
+
+  # Bucket for CodePipeline artifact storage.
+  PipelineBucket:
+      Type: AWS::S3::Bucket
+      DeletionPolicy: Delete
+      Properties:
+        Tags:
+          -
+           Key: "project"
+           Value: !Ref ProjectCode
+
+  # CodeBuild
+  ###########################
+
+  # Copy GitRepo source to S3 TEST Environment bucket and invalidates the related cloudfront distribution.
+  CodeBuildDeployTestSite:
+      Type: AWS::CodeBuild::Project
+      DeletionPolicy: Delete
+      DependsOn:
+        - CodeBuildRole
+        - SiteTestBucket
+      Properties:
+        Name: !Sub ${ProjectCode}-codebuild-deploy-test
+        Description: Deploy site to TEST Environment.
+        ServiceRole: !GetAtt CodeBuildRole.Arn
+        Artifacts:
+          Type: CODEPIPELINE
+        Environment:
+          Type: LINUX_CONTAINER
+          ComputeType: BUILD_GENERAL1_SMALL # http://docs.aws.amazon.com/codebuild/latest/userguide/build-env-ref-compute-types.html
+          Image: aws/codebuild/ubuntu-base:14.04 # http://docs.aws.amazon.com/codebuild/latest/userguide/build-env-ref-available.html
+        Source:
+          Type: CODEPIPELINE
+          BuildSpec: !Sub |
+            version: 0.2
+            phases:
+              post_build:
+                commands:
+                  - aws s3 cp --recursive --acl public-read ./httpdocs s3://${SiteTestBucket}/
+                  - aws cloudfront create-invalidation --distribution-id ${CloudFrontTestDistribution} --paths '/*'
+            artifacts:
+              files:
+                - ./httpdocs/*
+        TimeoutInMinutes: 10
+        Tags:
+          -
+           Key: "project"
+           Value: !Ref ProjectCode
+
+  # Copy GitRepo source to S3 PRODUCTION Environment bucket and invalidates the related cloudfront distribution.
+  CodeBuildDeploySite:
+      Type: AWS::CodeBuild::Project
+      DeletionPolicy: Delete
+      DependsOn:
+        - CodeBuildRole
+        - SiteBucket
+      Properties:
+        Name: !Sub ${ProjectCode}-codebuild-deploy-prod
+        Description: Deploy site to S3
+        ServiceRole: !GetAtt CodeBuildRole.Arn
+        Artifacts:
+          Type: CODEPIPELINE
+        Environment:
+          Type: LINUX_CONTAINER
+          ComputeType: BUILD_GENERAL1_SMALL # http://docs.aws.amazon.com/codebuild/latest/userguide/build-env-ref-compute-types.html
+          Image: aws/codebuild/ubuntu-base:14.04 # http://docs.aws.amazon.com/codebuild/latest/userguide/build-env-ref-available.html
+        Source:
+          Type: CODEPIPELINE
+          BuildSpec: !Sub |
+            version: 0.2
+            phases:
+              post_build:
+                commands:
+                  - aws s3 cp --recursive --acl public-read ./httpdocs s3://${SiteBucket}/
+                  - aws cloudfront create-invalidation --distribution-id ${CloudFrontDistribution} --paths '/*'
+        TimeoutInMinutes: 10
+        Tags:
+          -
+           Key: "project"
+           Value: !Ref ProjectCode
+
+  # CodeBuild
+  ###########################
+
+  ApprovalSNSTopic:
+    Type: AWS::SNS::Topic
+    DeletionPolicy: Delete
+    Properties:
+      Subscription:
+      - Endpoint: !Ref NotificationEmail
+        Protocol: email
+
+  # CodePipeline:
+  # repo => test S3 => test Cloudfront => (validate) => prod S3 => prod Cloudfront
+  ###########################
+
+  # Static Website Pipeline
+  Pipeline:
+      Type: "AWS::CodePipeline::Pipeline"
+      DeletionPolicy: Delete
+      DependsOn:
+        - GitRepo
+        - CodePipelineRole
+        - PipelineBucket
+        - CodeBuildDeployTestSite
+        - ApprovalSNSTopic
+        - CodeBuildDeploySite
+      Properties:
+        Name: !Sub "${ProjectCode}-codepipeline"
+        RestartExecutionOnUpdate: false
+        RoleArn: !Sub "arn:aws:iam::${AWS::AccountId}:role/${CodePipelineRole}"
+        Stages:
+          - Name: Source
+            Actions:
+              - Name: SourceAction
+                ActionTypeId:
+                  Category: Source
+                  Owner: AWS
+                  Provider: CodeCommit
+                  Version: 1
+                Configuration:
+                  RepositoryName: !GetAtt GitRepo.RepositoryName
+                  BranchName: master
+                OutputArtifacts:
+                  - Name: SiteSource
+                RunOrder: 1
+          - Name: Deploy
+            Actions:
+            - Name: DeployToTestEnvironment
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Version: '1'
+                Provider: CodeBuild
+              InputArtifacts:
+              - Name: SiteSource
+              OutputArtifacts:
+              - Name: DeployTestOutput
+              Configuration:
+                ProjectName: !Ref CodeBuildDeployTestSite
+              RunOrder: 1
+            - Name: Approve
+              ActionTypeId:
+                Category: Approval
+                Owner: AWS
+                Provider: Manual
+                Version: '1'
+              Configuration:
+                NotificationArn: !Ref ApprovalSNSTopic
+                ExternalEntityLink: !Sub "https://test.${DomainName}"
+                CustomData: !Sub "A new ${DomainName} website version has been updated. Do you want to deploy it?"
+              RunOrder: 2
+            - Name: DeployToProdEnvironment
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Version: '1'
+                Provider: CodeBuild
+              InputArtifacts:
+              - Name: SiteSource
+              OutputArtifacts:
+              - Name: DeployProdOutput
+              Configuration:
+                ProjectName: !Ref CodeBuildDeploySite
+              RunOrder: 3
+        ArtifactStore:
+          Type: S3
+          Location: !Ref PipelineBucket
+
+  ##################################################################
+  #  IAMs                                                          #
+  #                                                                #
+  ##################################################################
+
+  # Role for CodeBuild
+  CodeBuildRole:
+      Type: AWS::IAM::Role
+      DeletionPolicy: Delete
+      Properties:
+        AssumeRolePolicyDocument:
+          Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+              - codebuild.amazonaws.com
+            Action:
+            - sts:AssumeRole
+        Path: "/"
+        Policies:
+        - PolicyName: !Sub "${ProjectCode}-codebuild"
+          PolicyDocument:
+            Statement:
+            - Effect: Allow
+              Action: "*"
+              Resource: "*"
+            Version: '2012-10-17'
+
+  # Role for CodePipeline
+  CodePipelineRole:
+     Type: "AWS::IAM::Role"
+     DeletionPolicy: Delete
+     Properties:
+       AssumeRolePolicyDocument:
+         Version: "2012-10-17"
+         Statement:
+           - Effect: Allow
+             Principal:
+               Service:
+                 - codepipeline.amazonaws.com
+             Action:
+               - "sts:AssumeRole"
+       Path: "/"
+       Policies:
+         - PolicyName: !Sub "${ProjectCode}-codepipeline"
+           PolicyDocument:
+             Version: "2012-10-17"
+             Statement:
+               - Effect: "Allow"
+                 Action: "*"
+                 Resource: "*"
+
+  # IAM User to access CodeCommit Git repo
+  # You will need to manually add a CodeCommit UserName and Password!
+  ProjectUser:
+    Type: "AWS::IAM::User"
+    DeletionPolicy: Delete
+    Properties:
+      UserName: !Sub "${ProjectCode}-developer"
+      Policies:
+        - PolicyName: !Sub "${ProjectCode}-codecommit"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Deny"
+                Action:
+                  - "codecommit:CreateRepository"
+                  - "codecommit:DeleteRepository"
+                  - "codecommit:UpdateRepositoryName"
+                Resource: !Sub "arn:aws:codecommit:${AWS::Region}:${AWS::AccountId}:${GitRepo.RepositoryName}"
+              - Effect: "Allow"
+                Action: "codecommit:*"
+                Resource: !Sub "arn:aws:codecommit:${AWS::Region}:${AWS::AccountId}:${GitRepo.RepositoryName}"
+              - Effect: "Allow"
+                Action:
+                  - "iam:DeleteSSHPublicKey"
+                  - "iam:GetSSHPublicKey"
+                  - "iam:ListSSHPublicKeys"
+                  - "iam:UpdateSSHPublicKey"
+                  - "iam:UploadSSHPublicKey"
+                Resource: "arn:aws:iam::*:user/${aws:username}"
+              - Effect: "Allow"
+                Action:
+                  - "iam:CreateServiceSpecificCredential"
+                  - "iam:UpdateServiceSpecificCredential"
+                  - "iam:DeleteServiceSpecificCredential"
+                  - "iam:ResetServiceSpecificCredential"
+                Resource: "arn:aws:iam::*:user/${aws:username}"
+
+Mappings:
+  RegionMap:
+    ap-northeast-1:
+      S3hostedzoneID: "Z2M4EHUR26P7ZW"
+      websiteendpoint: "s3-website-ap-northeast-1.amazonaws.com"
+    ap-northeast-2:
+      S3hostedzoneID: "Z3W03O7B5YMIYP"
+      websiteendpoint: "s3-website.ap-northeast-2.amazonaws.com"
+    ap-south-1:
+      S3hostedzoneID: "Z11RGJOFQNVJUP"
+      websiteendpoint: "s3-website.ap-south-1.amazonaws.com"
+    ap-southeast-1:
+      S3hostedzoneID: "Z3O0J2DXBE1FTB"
+      websiteendpoint: "s3-website-ap-southeast-1.amazonaws.com"
+    ap-southeast-2:
+      S3hostedzoneID: "Z1WCIGYICN2BYD"
+      websiteendpoint: "s3-website-ap-southeast-2.amazonaws.com"
+    eu-central-1:
+      S3hostedzoneID: "Z21DNDUVLTQW6Q"
+      websiteendpoint: "s3-website.eu-central-1.amazonaws.com"
+    eu-west-1:
+      S3hostedzoneID: "Z1BKCTXD74EZPE"
+      websiteendpoint: "s3-website-eu-west-1.amazonaws.com"
+    sa-east-1:
+      S3hostedzoneID: "Z7KQH4QJS55SO"
+      websiteendpoint: "s3-website-sa-east-1.amazonaws.com"
+    us-east-1:
+      S3hostedzoneID: "Z3AQBSTGFYJSTF"
+      websiteendpoint: "s3-website-us-east-1.amazonaws.com"
+    us-east-2:
+      S3hostedzoneID: "Z2O1EMRO9K5GLX"
+      websiteendpoint: "s3-website.us-east-2.amazonaws.com"
+    us-west-1:
+      S3hostedzoneID: "Z2F56UZL2M1ACD"
+      websiteendpoint: "s3-website-us-west-1.amazonaws.com"
+    us-west-2:
+      S3hostedzoneID: "Z3BJ6K6RIION7M"
+      websiteendpoint: "s3-website-us-west-2.amazonaws.com"
+
+Outputs:
+
+  GitUrl:
+    Value: !GetAtt GitRepo.CloneUrlHttp
+    Description: The URL to use for cloning the repository over HTTPS.
+
+  WebsiteTestUrl:
+    Value: !Sub "https://test.${DomainName}"
+    Description: Website Test Environment URL.
+
+  WebsiteUrl:
+    Value: !Sub "https://${DomainName}"
+    Description: Website URL.

@@ -8,5 +8,5 @@ http://docs.aws.amazon.com/amazondynamodb/latest/developerguide/DynamoDBLocal.ht
 ## How to run image
 
 ```shell
-docker run -v /my-directory:/data -p 8000:8000 nachocoll/dynamodb
+docker run -p 8000:8000 nachocoll/dynamodb
 ```
