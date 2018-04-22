@@ -42,4 +42,4 @@ To start, check the related notes on this [LinkedIn post](https://www.linkedin.c
 
 #### Debugging
 
-To debug tests on Visual Studio Code, run this command ```$env:VSTEST_HOST_DEBUG=1``` and select .NET Core Attach configuration to go after running ```dotnet test```.
+To debug tests on Visual Studio Code, run this command ```$env:VSTEST_HOST_DEBUG=1``` and select .NET Core Attach debug configuration to go after running ```dotnet test```.
