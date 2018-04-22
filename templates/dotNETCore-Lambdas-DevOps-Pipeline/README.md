@@ -4,7 +4,7 @@ Use this template to get ideas on how to deploy your .NETCore lambdas into AWS.
 
 To start, check the related notes on this [LinkedIn post](https://www.linkedin.com/pulse/building-cicd-pipeline-aws-lambdas-net-core-nacho-coll/).
 
-## External References 
+## External References / Notes
 
 ### .NET Core Tools
 
@@ -18,7 +18,7 @@ To start, check the related notes on this [LinkedIn post](https://www.linkedin.c
 
 [Amazon.Lambda.Templates](https://www.nuget.org/packages/Amazon.Lambda.Templates) / [AWS Lambda for .NET Core](https://github.com/aws/aws-lambda-dotnet)
 
-# Cloudformation & SAM
+### Cloudformation & SAM
 
 [AWS Cloudformation Resource Types Reference](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-template-resource-type-ref.html)
 
@@ -42,4 +42,4 @@ To start, check the related notes on this [LinkedIn post](https://www.linkedin.c
 
 #### Debugging
 
-$env:VSTEST_HOST_DEBUG=1 + attach
+To debug tests on Visual Studio Code, run this command ```$env:VSTEST_HOST_DEBUG=1``` and select .NET Core Attach configuration to go after running ```dotnet test```.
