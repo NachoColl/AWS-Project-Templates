@@ -1,18 +1,8 @@
-# nWAY mobile apps API (AWS Lambdas .NET Code)
+# .NET Core Lambdas deployment pipeline.
 
-This is the API code used by WhereAreYouGPS.com/MapME.net mobile apps (mainly to send mobile device GPS Locations to the server).
+Use this template to get ideas on how to deploy your .NETCore lambdas into AWS. 
 
-## Content
-
-- The ```\src``` folder contains the API functions code and the required [SAM](https://docs.aws.amazon.com/lambda/latest/dg/serverless_app.html) cloudformation template to deploy the code.
-- The ```\test``` folder contains the functions unit tests.
--  ```.travis.yml```, ```.deploy.sh``` and ```\src\sam.yml``` files are used by Travis CI tool for deployment:
-    - ```.travis.yml``` executes the tests and deploys the code on success.
-    - ```.deploy.sh``` creates code package, uploads the package to S3 and executes ```\src\sam.yml``` template.
-
-## Branches
-
-There are 2 main branches: *master* and *dev*.
+To start, check the related notes on this [LinkedIn post](https://www.linkedin.com/pulse/building-cicd-pipeline-aws-lambdas-net-core-nacho-coll/).
 
 ## External References 
 
