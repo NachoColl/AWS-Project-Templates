@@ -1,22 +1,6 @@
-# AWS-Project-Templates
+# My personal AWS Labs repo.
 
-Some AWS coding templates.
+[CI/CD Pipeline to deploy your .NET Core Lambdas to AWS](./templates/dotNETCore-Lambdas-DevOps-Pipeline)
 
-## Development Environment Setup
 
-- [Visual Studio Code](https://code.visualstudio.com/) as the  code editor. 
-    - Just download and install.
-- [AWS SAM Local](https://github.com/awslabs/aws-sam-local) to run Lambda code.
-    - Install [Node.js](https://nodejs.org/en/download/).
-    - Install SAM Local ```npm install -g aws-sam-local```
-- Some docker images to run AWS services locally.
-    - Install [docker](https://www.docker.com/).
-    - Run the project required images (e.g. [DynamoDB](./dockers/DynamoDB), [S3](./dockers/S3) or [LocalStack](https://github.com/localstack/localstack)).
-        
-
-## Templates
-
-### AWS Lambda
-
-[Lambda + S3 + DynamoDB](./templates/lambda-dynamoDB-s3)
-A Lambda project using DynamoDB and S3 docker images to test code locally.
+[AWS DevOps automation for static websites](./templates/StaticWebsite-S3_CloudFront-DevOps-Pipeline)
