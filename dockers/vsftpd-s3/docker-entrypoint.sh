@@ -7,7 +7,7 @@ trap 'kill -SIGQUIT $PID' INT
 # VSFTPD PASV configuration
 PASV_ADDRESS=${PASV_ADDRESS:-$(timeout -t 1 wget -qO- http://169.254.169.254/latest/meta-data/public-ipv4 2>/dev/null ||:)}
 PASV_MIN_PORT=${PASV_MIN_PORT:-65000}
-PASV_MAX_PORT=${PASV_MAX_PORT:-65050}
+PASV_MAX_PORT=${PASV_MAX_PORT:-65000}
 
 # FTP allowed commands
 # full command list : https://blog.vigilcode.com/2011/08/configure-secure-ftp-with-vsftpd/
