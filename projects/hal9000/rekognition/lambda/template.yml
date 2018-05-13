@@ -1,0 +1,20 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+
+Resources:
+
+  RekognitionLambda:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ./
+      Handler: rekognition.lambda_handler
+      Runtime: python3.6
+      Timeout: 180
+  
+  RekognitionUpdateCollectionLambda:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ./
+      Handler: rekognition-updatecollection.lambda_handler
+      Runtime: python3.6
+      Timeout: 180

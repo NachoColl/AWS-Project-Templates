@@ -1,10 +1,8 @@
-Simplified version of [https://github.com/1001Pharmacies/docker-vsftpd-s3](https://github.com/1001Pharmacies/docker-vsftpd-s3).
-Moved to ubuntu.
-
 # docker-vsftpd-s3
 
 Ubuntu based Dockerfile running a vsftpd server providing FTP access to an Amazon S3 bucket.
-This docker image can run in Amazon ECS.
+
+Simplified version of [https://github.com/1001Pharmacies/docker-vsftpd-s3](https://github.com/1001Pharmacies/docker-vsftpd-s3).
 
 ## Usage
 
@@ -57,12 +55,15 @@ You should allow access on port 21 and port 65000 at least on the instances runn
 Build a docker image named "vsftpd-s3".
 
 ```shell
-$ docker build -t vsftpd-s3 .
+docker build -t vsftpd-s3 .
 ```
 
 Start a docker from this image.
 
 ```shell
-$ docker run -it --device /dev/fuse --cap-add sys_admin --security-opt apparmor:unconfined -p 21:21 -p 65000:65000 -e AWS_ACCESS_KEY_ID=ABCDEFGHIJKLMNOPQRST -e AWS_SECRET_ACCESS_KEY=0123456789ABCDEF0123456789ABCDEF01234567 -e S3_BUCKET="my-s3-bucket" -e FTPD_USER="my_ftp_user" -e FTPD_PASS="my_ftp_password" vsftpd-s3
+docker run -it --device /dev/fuse --cap-add sys_admin --security-opt apparmor:unconfined -p 21:21 -p 65000:65000 -e AWS_ACCESS_KEY_ID=ABCDEFGHIJKLMNOPQRST -e AWS_SECRET_ACCESS_KEY=0123456789ABCDEF0123456789ABCDEF01234567 -e S3_BUCKET="my-s3-bucket" -e FTPD_USER="my_ftp_user" -e FTPD_PASS="my_ftp_password" vsftpd-s3
 ```
+
+
+
 
