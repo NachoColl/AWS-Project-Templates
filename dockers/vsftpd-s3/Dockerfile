@@ -25,5 +25,5 @@ EXPOSE 21 65000
 
 COPY docker-entrypoint.sh /
 
-ENTRYPOINT ["sh","/docker-entrypoint.sh"]
+ENTRYPOINT ["bash","/docker-entrypoint.sh"]
 VOLUME ["/var/log"]
