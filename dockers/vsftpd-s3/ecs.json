@@ -1,0 +1,70 @@
+{
+    "volumes": [],
+    "networkMode": "bridge",
+    "placementConstraints": [],
+    "family": "vsftpd-s3",
+    "taskRoleArn": "arn:aws:iam::882508506175:role/ecsTaskExecutionRole",
+    "containerDefinitions": [
+        {
+            "name": "vsftpd-s3",
+            "image": "nachocoll/vsftpd-s3",
+            "essential": true,
+            "portMappings": [
+                {
+                    "hostPort": 21,
+                    "containerPort": 21,
+                    "protocol": "tcp"
+                },
+                {
+                    "hostPort": 65000,
+                    "containerPort": 65000,
+                    "protocol": "tcp"
+                }
+            ],
+            "environment": [
+                {
+                    "name": "AWS_ACCESS_KEY_ID",
+                    "value": "pending"
+                },
+                {
+                    "name": "AWS_SECRET_ACCESS_KEY",
+                    "value": "pending"
+                },
+                {
+                    "name": "FTPD_PASS",
+                    "value": "pending"
+                },
+                {
+                    "name": "FTPD_USER",
+                    "value": "pending"
+                },
+                {
+                    "name": "S3_BUCKET",
+                    "value": "pending"
+                }
+            ],
+            "privileged": false,
+            "dockerSecurityOptions": [
+                "apparmor:unconfined"
+            ],
+            "logConfiguration": {
+                "logDriver": "awslogs",
+                "options": {
+                    "awslogs-group": "/ecs/vsftpd-s3",
+                    "awslogs-region": "us-west-2",
+                    "awslogs-stream-prefix": "ecs"
+                }
+            },
+            "linuxParameters": {
+                "capabilities": {
+                    "add": [
+                        "SYS_ADMIN"
+                    ]
+                },
+                "devices": [ {
+                    "hostPath": "/dev/fuse"
+                }]
+            }
+        }
+    ] 
+}

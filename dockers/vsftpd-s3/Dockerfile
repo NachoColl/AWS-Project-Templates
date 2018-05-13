@@ -21,8 +21,9 @@ RUN apt-get -y install vsftpd
 
 RUN sed -i 's|/var/log/messages|/var/log/*.log|' /etc/logrotate.conf
 
-EXPOSE 21-22 65000-65050
+EXPOSE 21 65000
 
 COPY docker-entrypoint.sh /
-ENTRYPOINT ["/docker-entrypoint.sh"]
+
+ENTRYPOINT ["sh","/docker-entrypoint.sh"]
 VOLUME ["/var/log"]
