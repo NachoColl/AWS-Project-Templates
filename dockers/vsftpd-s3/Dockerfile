@@ -1,4 +1,4 @@
-FROM phusion/baseimage:0.10.1
+FROM ubuntu
 
 # s3fs tag to checkout
 ARG S3FS_VERSION=v1.83
