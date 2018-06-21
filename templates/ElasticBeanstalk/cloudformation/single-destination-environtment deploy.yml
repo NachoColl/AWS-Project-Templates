@@ -1,0 +1,380 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: AWS ElasticBeanstalk Environment & Deployment Pipeline (NO BLUE/GREEN).
+
+Parameters:
+
+  ElasticBeanstalkStack:
+    Description: The ElasticBeanstalk application stack / lowercase.
+    Type: String
+    MinLength: 1
+    MaxLength: 255
+    AllowedPattern: "^[a-zA-Z][-a-zA-Z0-9]*$"
+
+  ArtifactS3Bucket:
+    Description: The application artifact bucket.
+    Type: String
+
+  ArtifactS3Key:
+    Description: The application artifact key.
+    Type: String
+
+  EnvironmentName:
+    Description: The application environment name / lowercase (e.g. app-sandbox).
+    Type: String
+    MinLength: 1
+    MaxLength: 255
+    AllowedPattern: "^[a-z][-a-z0-9]*$"
+
+  InstanceType:
+    Description: The instance type to be provisioned for the servers.
+    Type: String
+    Default: t2.small
+    AllowedValues:
+    - t2.small
+    - t2.medium
+    - t2.large
+
+  InstancesMin:
+    Description: Minimum number of instances.
+    Type: Number
+    Default: 1
+  
+  InstancesMax:
+    Description: Maximum number of instances.
+    Type: Number
+    Default: 4
+
+Metadata: 
+  AWS::CloudFormation::Interface: 
+    ParameterGroups: 
+      - 
+        Label: 
+          default: "Application Stack"
+        Parameters: 
+          - ElasticBeanstalkStack
+      
+      - 
+        Label: 
+          default: "Application Artifact"
+        Parameters: 
+          - ArtifactS3Bucket
+          - ArtifactS3Key
+
+      - 
+        Label: 
+          default: "Environment Configuration"
+        Parameters: 
+          - EnvironmentName
+          - InstanceType
+          - InstancesMin
+          - InstancesMax
+
+Resources:
+
+  # Template CONTENT:
+  #   - ElasticBeanstalk ENVIRONMENT
+  #   - CodePipeline with CodeDeploy to previous ENVIRONMENT
+
+  ###########################################
+  # ElasticBeanstalk ENVIRONMENT            #
+  ###########################################
+ 
+  # IAM 
+  ElasticBeanstalkAppRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Path: /
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          -
+            Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+
+  ElasticBeanstalkAppInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /
+      Roles:
+      - !Ref ElasticBeanstalkAppRole
+
+  # Security Group
+  ElasticBeanstalkSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "${ElasticBeanstalkStack} ElasticBeanstalk Security Group."
+      VpcId: 
+        Fn::ImportValue:
+            Fn::Sub: "${ElasticBeanstalkStack}-ElasticBeanstalk-Application-VPC"
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: '80'
+        ToPort: '80'
+        CidrIp: 0.0.0.0/0
+      - IpProtocol: tcp
+        FromPort: '123'
+        ToPort: '123'
+        CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+      - IpProtocol: tcp
+        FromPort: '80'
+        ToPort: '80'
+        CidrIp: 0.0.0.0/0
+      - IpProtocol: tcp
+        FromPort: '123'
+        ToPort: '123'
+        CidrIp: 0.0.0.0/0
+
+  ElasticBeanstalkEnvironment:
+    Type: AWS::ElasticBeanstalk::Environment
+    Properties:
+      EnvironmentName: !Ref EnvironmentName   
+      TemplateName: 
+        Fn::ImportValue:
+            Fn::Sub: "${ElasticBeanstalkStack}-ElasticBeanstalk-Application-Configuration"
+      ApplicationName: 
+        Fn::ImportValue:
+            Fn::Sub: "${ElasticBeanstalkStack}-ElasticBeanstalk-Application"
+      OptionSettings:
+
+        # LOAD BALANCER
+        - Namespace: aws:elasticbeanstalk:environment
+          OptionName: EnvironmentType
+          Value: LoadBalanced
+
+        - Namespace: aws:elasticbeanstalk:environment
+          OptionName: LoadBalancerType
+          Value: application
+
+        # INSTANCE
+        - Namespace: aws:autoscaling:launchconfiguration
+          OptionName: InstanceType
+          Value: !Ref InstanceType
+        
+        - Namespace: aws:autoscaling:launchconfiguration
+          OptionName: IamInstanceProfile
+          Value: !Ref ElasticBeanstalkAppInstanceProfile
+
+        # SECURITY GROUPs
+        - Namespace: aws:autoscaling:launchconfiguration
+          OptionName: SecurityGroups
+          Value: !Ref ElasticBeanstalkSecurityGroup
+
+        # AUTOSCALING
+        - Namespace: aws:autoscaling:asg
+          OptionName: MinSize
+          Value: !Ref InstancesMin
+
+        - Namespace: aws:autoscaling:asg
+          OptionName: MaxSize
+          Value: !Ref InstancesMax
+
+  ###########################################
+  # APP Deployment Pipeline To ENVIRONMENT  #
+  ###########################################
+
+  ElasticBeanstalkDeploymentPiPeline:
+    Type: "AWS::CodePipeline::Pipeline"
+    DependsOn:
+    - ElasticBeanstalkEnvironment
+    Properties:
+      RoleArn: !GetAtt ElasticBeanstalkDeploymentPiPelineRole.Arn
+      ArtifactStore:
+        Type: S3
+        Location: !Ref ElasticBeanstalkDeploymentPiPelineBucket
+      Stages:
+      - Name: Source
+        Actions:
+        - Name: SourceAction
+          InputArtifacts: []
+          ActionTypeId:
+            Category: Source
+            Owner: AWS
+            Version: '1'
+            Provider: S3
+          OutputArtifacts:
+          - Name: !Sub "${ElasticBeanstalkStack}-${EnvironmentName}-Application"
+          Configuration:
+            S3Bucket: !Ref ArtifactS3Bucket  
+            S3ObjectKey: !Ref ArtifactS3Key
+            PollForSourceChanges: 'false'
+          RunOrder: 1
+      - Name: Deploy
+        Actions:
+        - Name: !Sub "${EnvironmentName}-Deploy"
+          InputArtifacts:
+            - Name: !Sub "${ElasticBeanstalkStack}-${EnvironmentName}-Application"           
+          ActionTypeId:
+            Category: Deploy
+            Owner: AWS
+            Version: '1'
+            Provider: ElasticBeanstalk
+          Configuration:
+            ApplicationName: 
+              Fn::ImportValue:
+                Fn::Sub: "${ElasticBeanstalkStack}-ElasticBeanstalk-Application"
+            EnvironmentName: !Ref ElasticBeanstalkEnvironment
+          RunOrder: 1
+ 
+  # Pipeline Bucket
+  ElasticBeanstalkDeploymentPiPelineBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: 
+        Fn::Join:
+          - '-'
+          - - Fn::ImportValue:
+                Fn::Sub: "${ElasticBeanstalkStack}-ElasticBeanstalk-Application"
+            - !Sub "${EnvironmentName}-${AWS::Region}-codepipeline-artifactstore"
+
+  # IAM
+  ElasticBeanstalkDeploymentPiPelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Path: /
+      RoleName: !Sub "${ElasticBeanstalkStack}-CodePipeline-Role"
+      AssumeRolePolicyDocument: |
+        {
+          "Version": "2012-10-17",
+          "Statement": {
+            "Effect": "Allow",
+            "Principal": {"Service": "codepipeline.amazonaws.com"},
+            "Action": "sts:AssumeRole"
+          }
+        }
+
+  # TO-DO: Restrict to specific resources.
+  ElasticBeanstalkDeploymentPiPelinePolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub "${ElasticBeanstalkStack}-CodePipeline-Policy"
+      Roles:
+        - 
+          !Ref ElasticBeanstalkDeploymentPiPelineRole
+      PolicyDocument: |
+        {
+          "Statement": [
+              {
+                  "Action": [
+                      "s3:GetObject",
+                      "s3:GetObjectVersion",
+                      "s3:GetBucketVersioning"
+                  ],
+                  "Resource": "*",
+                  "Effect": "Allow"
+              },
+              {
+                  "Action": [
+                      "s3:PutObject"
+                  ],
+                  "Resource": [
+                      "arn:aws:s3:::codepipeline*",
+                      "arn:aws:s3:::elasticbeanstalk*"
+                  ],
+                  "Effect": "Allow"
+              },
+              {
+                  "Action": [
+                      "codecommit:CancelUploadArchive",
+                      "codecommit:GetBranch",
+                      "codecommit:GetCommit",
+                      "codecommit:GetUploadArchiveStatus",
+                      "codecommit:UploadArchive"
+                  ],
+                  "Resource": "*",
+                  "Effect": "Allow"
+              },
+              {
+                  "Action": [
+                      "codedeploy:CreateDeployment",
+                      "codedeploy:GetApplicationRevision",
+                      "codedeploy:GetDeployment",
+                      "codedeploy:GetDeploymentConfig",
+                      "codedeploy:RegisterApplicationRevision"
+                  ],
+                  "Resource": "*",
+                  "Effect": "Allow"
+              },
+              {
+                  "Action": [
+                      "elasticbeanstalk:*",
+                      "ec2:*",
+                      "elasticloadbalancing:*",
+                      "autoscaling:*",
+                      "cloudwatch:*",
+                      "s3:*",
+                      "sns:*",
+                      "cloudformation:*",
+                      "rds:*",
+                      "sqs:*",
+                      "ecs:*",
+                      "iam:PassRole"
+                  ],
+                  "Resource": "*",
+                  "Effect": "Allow"
+              },
+              {
+                  "Action": [
+                      "lambda:InvokeFunction",
+                      "lambda:ListFunctions"
+                  ],
+                  "Resource": "*",
+                  "Effect": "Allow"
+              },
+              {
+                  "Action": [
+                      "opsworks:CreateDeployment",
+                      "opsworks:DescribeApps",
+                      "opsworks:DescribeCommands",
+                      "opsworks:DescribeDeployments",
+                      "opsworks:DescribeInstances",
+                      "opsworks:DescribeStacks",
+                      "opsworks:UpdateApp",
+                      "opsworks:UpdateStack"
+                  ],
+                  "Resource": "*",
+                  "Effect": "Allow"
+              },
+              {
+                  "Action": [
+                      "cloudformation:CreateStack",
+                      "cloudformation:DeleteStack",
+                      "cloudformation:DescribeStacks",
+                      "cloudformation:UpdateStack",
+                      "cloudformation:CreateChangeSet",
+                      "cloudformation:DeleteChangeSet",
+                      "cloudformation:DescribeChangeSet",
+                      "cloudformation:ExecuteChangeSet",
+                      "cloudformation:SetStackPolicy",
+                      "cloudformation:ValidateTemplate",
+                      "iam:PassRole"
+                  ],
+                  "Resource": "*",
+                  "Effect": "Allow"
+              },
+              {
+                  "Action": [
+                      "codebuild:BatchGetBuilds",
+                      "codebuild:StartBuild"
+                  ],
+                  "Resource": "*",
+                  "Effect": "Allow"
+              }
+          ],
+          "Version": "2012-10-17"
+        }
+
+  
+  
+Outputs:
+
+  EnvironmentURL:
+    Description: Environment URL
+    Value: !GetAtt ElasticBeanstalkEnvironment.EndpointURL
+    Export:
+      Name: !Sub "${AWS::StackName}-EnvironmentURL"

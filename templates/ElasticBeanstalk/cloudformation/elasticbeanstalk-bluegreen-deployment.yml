@@ -1,0 +1,651 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: AWS CloudFormation templates to create an AWS ElasticBeanstalk application.
+
+Parameters:
+
+  ApplicationName:
+    Description: Name of your ElasticBeanstalk application / lowercase (must be unique).
+    Type: String
+    MinLength: 1
+    MaxLength: 255
+    AllowedPattern: "^[a-z][-a-z0-9]*$"
+
+  # Email address to receive SNS approval requests
+  NotificationEmail:
+    Type: String
+    Description: "Email address to receive approval requests"
+    MinLength: 6
+    AllowedPattern: ".+@[a-z0-9]+[-.a-z0-9]*(\\.[a-z][a-z]+)+"
+    ConstraintDescription: "Provide a valid email address"
+
+  DestinationVPC:
+    Description: The application environment destination VPC.
+    Type: AWS::EC2::VPC::Id
+  
+  DestinationSubnets:
+    Description: Select at least 2 from different AZ.
+    Type: List<AWS::EC2::Subnet::Id>
+
+  InstanceType:
+    Description: The instance type to be provisioned for the servers.
+    Type: String
+    Default: t2.small
+    AllowedValues:
+    - t2.small
+    - t2.medium
+    - t2.large
+
+  InstancesMin:
+    Description: Minimum number of instances.
+    Type: Number
+    Default: 1
+  
+  InstancesMax:
+    Description: Maximum number of instances.
+    Type: Number
+    Default: 4
+
+  DeployLambda:
+    Description: The create environment lambda function name.
+    Type: String
+
+Metadata: 
+  AWS::CloudFormation::Interface: 
+    ParameterGroups: 
+      - 
+        Label: 
+          default: "Application Configuration"
+        Parameters: 
+          - ApplicationName
+          - NotificationEmail
+      - 
+        Label: 
+          default: "Environment Configuration"
+        Parameters: 
+          - InstanceType
+          - InstancesMin
+          - InstancesMax
+      - 
+        Label: 
+          default: "Network Configuration"
+        Parameters: 
+          - DestinationVPC
+          - DestinationSubnets
+      - 
+        Label: 
+          default: "Pipeline Invokes"
+        Parameters: 
+          - DeployLambda
+
+Resources:
+
+  # EB APPLICATION.
+  ElasticBeanstalkApplication:
+    Type: AWS::ElasticBeanstalk::Application
+    Properties:
+      ApplicationName: !Ref ApplicationName
+
+  # EB CONFIGURATION TEMPLATE.
+  ElasticBeanstalkConfigurationTemplate:
+    Type: AWS::ElasticBeanstalk::ConfigurationTemplate
+    DependsOn:
+    - ElasticBeanstalkServiceRole
+    - ElasticBeanstalkSecurityGroup
+    Properties:
+      ApplicationName: !Ref ElasticBeanstalkApplication
+      SolutionStackName: 64bit Windows Server Core 2016 v1.2.0 running IIS 10.0
+      OptionSettings:
+        # https://docs.aws.amazon.com/elasticbeanstalk/latest/dg/command-options-general.html
+
+        # SERVICE ROLE
+        - Namespace: aws:elasticbeanstalk:environment
+          OptionName: ServiceRole
+          Value: !Ref ElasticBeanstalkServiceRole
+        
+        # VPC SETTINGS
+        - Namespace: aws:ec2:vpc
+          OptionName: VPCId
+          Value: 
+            !Ref DestinationVPC
+
+        - Namespace: aws:ec2:vpc
+          OptionName: ELBScheme
+          Value: internal
+
+        - Namespace: aws:ec2:vpc
+          OptionName: Subnets
+          Value:
+            "Fn::Join":
+            - ','
+            - !Ref DestinationSubnets
+        
+        - Namespace: aws:ec2:vpc
+          OptionName: ELBSubnets
+          Value:
+            "Fn::Join":
+            - ','
+            - !Ref DestinationSubnets
+
+        # LOAD BALANCER
+        - Namespace: aws:elasticbeanstalk:environment
+          OptionName: EnvironmentType
+          Value: LoadBalanced
+
+        - Namespace: aws:elasticbeanstalk:environment
+          OptionName: LoadBalancerType
+          Value: application
+
+        # INSTANCE
+        - Namespace: aws:autoscaling:launchconfiguration
+          OptionName: InstanceType
+          Value: !Ref InstanceType
+        
+        - Namespace: aws:autoscaling:launchconfiguration
+          OptionName: IamInstanceProfile
+          Value: !Ref ElasticBeanstalkAppInstanceProfile
+
+        # SECURITY GROUPs
+        - Namespace: aws:autoscaling:launchconfiguration
+          OptionName: SecurityGroups
+          Value: !Ref ElasticBeanstalkSecurityGroup
+
+        # AUTOSCALING
+        - Namespace: aws:autoscaling:asg
+          OptionName: MinSize
+          Value: !Ref InstancesMin
+
+        - Namespace: aws:autoscaling:asg
+          OptionName: MaxSize
+          Value: !Ref InstancesMax
+
+        # CLOUDWATCH LOGS
+        - Namespace: aws:elasticbeanstalk:cloudwatch:logs
+          OptionName: StreamLogs
+          Value: false
+
+        - Namespace: aws:elasticbeanstalk:cloudwatch:logs
+          OptionName: DeleteOnTerminate
+          Value: false
+        
+        - Namespace: aws:elasticbeanstalk:cloudwatch:logs:health
+          OptionName: HealthStreamingEnabled
+          Value: false
+
+        - Namespace: aws:elasticbeanstalk:cloudwatch:logs:health
+          OptionName: DeleteOnTerminate
+          Value: false
+  
+  ###########################################
+  # APP Deployment Pipeline To ENVIRONMENT  #
+  ###########################################
+  ElasticBeanstalkDeploymentPiPeline:
+    Type: "AWS::CodePipeline::Pipeline"
+    DependsOn:
+    - SourceBucket
+    - ElasticBeanstalkPiPelineBucket
+    - ElasticBeanstalkDeploymentPiPelineRole
+    Properties:
+      RoleArn: !GetAtt ElasticBeanstalkDeploymentPiPelineRole.Arn
+      ArtifactStore:
+        Type: S3
+        Location: !Ref ElasticBeanstalkPiPelineBucket
+      Stages:
+      # SOURCE ARTIFACT
+      - Name: Source
+        Actions:
+        - Name: SourceAction
+          InputArtifacts: []
+          ActionTypeId:
+            Category: Source
+            Owner: AWS
+            Version: '1'
+            Provider: S3
+          OutputArtifacts:
+          - Name: SourceArtifact
+          Configuration:
+            S3Bucket: !Sub "${ApplicationName}-${AWS::Region}-artifact-source.vueling.com"  
+            S3ObjectKey: !Sub "${ApplicationName}.zip"
+            PollForSourceChanges: 'true'
+          RunOrder: 1
+      # CREATE NEW ENVIRONMENT
+      - Name: Green-Create
+        Actions:
+        - Name: CreateGreenEnvironment
+          ActionTypeId:
+            Category: Build
+            Owner: AWS
+            Version: '1'
+            Provider: CodeBuild
+          InputArtifacts:
+          - Name: SourceArtifact
+          OutputArtifacts:
+          - Name: GreenEnvironmentTestConfiguration
+          Configuration:
+            ProjectName: !Ref CodeBuildCreateGreenEnvironment
+          RunOrder: 1
+        - Name: WaitGreenEnvironment
+          ActionTypeId:
+            Category: Build
+            Owner: AWS
+            Version: '1'
+            Provider: CodeBuild
+          InputArtifacts:
+          - Name: GreenEnvironmentTestConfiguration
+          OutputArtifacts:
+          - Name: RunningGreenEnvironmentTestConfiguration
+          Configuration:
+            ProjectName: !Ref CodeBuildWaitGreenEnvironment
+          RunOrder: 2
+      # TEST RECENTLY CREATED DEPLOYMENT
+      - Name: Green-Test
+        Actions:
+        - Name: GreenEnvironmentTest
+          ActionTypeId:
+            Category: Build
+            Owner: AWS
+            Version: '1'
+            Provider: CodeBuild
+          InputArtifacts:
+          - Name: RunningGreenEnvironmentTestConfiguration
+          OutputArtifacts:
+          - Name: GreenEnvironmentTests
+          Configuration:
+            ProjectName: !Ref CodeBuildTestEnvironment
+          RunOrder: 1
+ 
+  # CODEBUILD for invoking lambda to create green environment
+  CodeBuildCreateGreenEnvironment:
+      Type: AWS::CodeBuild::Project
+      DeletionPolicy: Delete
+      DependsOn:
+        - CodeBuildRole
+      Properties:
+        Name: !Sub "${ElasticBeanstalkApplication}-codebuild-build-greenenvironment"
+        Description: Build Green Environment
+        ServiceRole: !GetAtt CodeBuildRole.Arn
+        Artifacts:
+          Type: CODEPIPELINE
+        Environment:
+          Type: LINUX_CONTAINER
+          ComputeType: BUILD_GENERAL1_SMALL # http://docs.aws.amazon.com/codebuild/latest/userguide/build-env-ref-compute-types.html
+          Image: aws/codebuild/ubuntu-base:14.04 # http://docs.aws.amazon.com/codebuild/latest/userguide/build-env-ref-available.html
+        Source:
+          Type: CODEPIPELINE
+          BuildSpec: !Sub |
+            version: 0.2
+            phases:
+              install:
+                commands:
+                  # install jq (to manage json)
+                  - curl -qL -o jq https://stedolan.github.io/jq/download/linux64/jq && chmod +x ./jq
+                  - ./jq --version
+              build:
+                commands:
+                  # get the input artifact S3 bucket and key
+                  - echo $CODEBUILD_SOURCE_VERSION
+                  - NO_ARN=$(echo $CODEBUILD_SOURCE_VERSION | sed -r 's/arn:aws:s3::://g')
+                  - S3_ARTIFACT_BUCKET=$(echo $NO_ARN | cut -d'/' -f1)
+                  - echo $S3_ARTIFACT_BUCKET
+                  - S3_ARTIFACT_KEY=$(echo $NO_ARN | cut -d'/' --complement -s -f1)
+                  - echo $S3_ARTIFACT_KEY
+                  # invoke the create environment
+                  - PAYLOAD='{"BeanstalkApplicationName":"${ElasticBeanstalkApplication}", "BeanstalkApplicationConfigurationTemplate":"${ElasticBeanstalkConfigurationTemplate}", "S3Bucket":"'"$S3_ARTIFACT_BUCKET"'","S3Key":"'"$S3_ARTIFACT_KEY"'"}'
+                  - echo $PAYLOAD 
+                  - RESULT=$(aws lambda invoke --invocation-type RequestResponse --function-name ${DeployLambda} --payload "$PAYLOAD" --output json createenvironment.json)
+                  - echo $RESULT
+                  - RESULT_ERROR=$(echo $RESULT | ./jq '.FunctionError')
+                  - echo $RESULT_ERROR
+                  - if [ $RESULT_ERROR != null ]; then echo $RESULT; exit 1; fi # terminate and indicate error
+                  - cat createenvironment.json
+            artifacts:
+              files:
+                # postman.test.json the environment test to execute (provided on the artifact zip)
+                - postman.test.json
+                # createenvironment.json contains the recently created environment id
+                - createenvironment.json
+        TimeoutInMinutes: 10
+
+  # CODEBUILD for waiting green environment is ready
+  CodeBuildWaitGreenEnvironment:
+      Type: AWS::CodeBuild::Project
+      DeletionPolicy: Delete
+      DependsOn:
+        - CodeBuildRole
+      Properties:
+        Name: !Sub "${ElasticBeanstalkApplication}-codebuild-wait-greenenvironment"
+        Description: Wait Green Environment
+        ServiceRole: !GetAtt CodeBuildRole.Arn
+        Artifacts:
+          Type: CODEPIPELINE
+        Environment:
+          Type: LINUX_CONTAINER
+          ComputeType: BUILD_GENERAL1_SMALL # http://docs.aws.amazon.com/codebuild/latest/userguide/build-env-ref-compute-types.html
+          Image: aws/codebuild/ubuntu-base:14.04 # http://docs.aws.amazon.com/codebuild/latest/userguide/build-env-ref-available.html
+        Source:
+          Type: CODEPIPELINE
+          BuildSpec: !Sub |
+            version: 0.2
+            phases:
+              install:
+                commands:
+                  # install jq (to manage json)
+                  - curl -qL -o jq https://stedolan.github.io/jq/download/linux64/jq && chmod +x ./jq
+                  - ./jq --version
+              build:
+                commands:
+                  # get environment id from previous step
+                  - ENVIRONMENT_ID=$(cat createenvironment.json | ./jq '.EnvironmentId' | sed 's/"//g')
+                  - echo $ENVIRONMENT_ID
+                  - STATUS="Launching" # EB takes a while to get ready.
+                  # wait the environment is ready
+                  - while [ $STATUS != "Ready" ]; do sleep 1m; STATUS=$(aws elasticbeanstalk describe-environments --environment-ids $ENVIRONMENT_ID --query 'Environments[0].Status' | sed 's/"//g'); echo $STATUS; done
+                  - echo $STATUS
+                  # get the environment endpoint
+                  - ENDPOINT=$(aws elasticbeanstalk describe-environments --environment-ids $ENVIRONMENT_ID --query 'Environments[0].CNAME' | sed 's/"//g');
+                  - echo $ENDPOINT
+                  - echo $ENDPOINT > endpoint.txt
+            artifacts:
+              files:
+                # endpoint.txt contains the new environment endpoint url
+                - endpoint.txt
+                # postman.test.json the environment test to execute (provided on the artifact zip)
+                - postman.test.json
+        TimeoutInMinutes: 30
+
+  # CODEBUILD for TESTING
+  CodeBuildTestEnvironment:
+      Type: AWS::CodeBuild::Project
+      DeletionPolicy: Delete
+      DependsOn:
+        - CodeBuildRole
+      Properties:
+        Name: !Sub "${ElasticBeanstalkApplication}-codebuild-test-evironment"
+        Description: Test Environment
+        ServiceRole: !GetAtt CodeBuildRole.Arn
+        Artifacts:
+          Type: CODEPIPELINE
+        Environment:
+          Type: LINUX_CONTAINER
+          ComputeType: BUILD_GENERAL1_SMALL # http://docs.aws.amazon.com/codebuild/latest/userguide/build-env-ref-compute-types.html
+          Image: aws/codebuild/nodejs:10.1.0 # http://docs.aws.amazon.com/codebuild/latest/userguide/build-env-ref-available.html
+        Source:
+          Type: CODEPIPELINE
+          BuildSpec: !Sub |
+            version: 0.2
+            phases:
+              pre_build:
+                commands:
+                  - npm install --global newman 
+              build:
+                commands:
+                  # get the new environment enpoint from previous step
+                  - ENDPOINT=$(cat endpoint.txt | sed 's/"//g')
+                  - echo $ENDPOINT
+                  - curl $ENDPOINT
+                  # replace the test with the appropiate environment url
+                  - sed -i -e "s/{{URL}}/$ENDPOINT/g" postman.test.json
+                  - cat postman.test.json
+                  # run the tests
+                  - newman run -r html,cli postman.test.json --reporter-html-export report.html
+                  - cat report.html
+            artifacts:
+              files:
+                - report.html
+        TimeoutInMinutes: 30
+
+  # Deployment bucket
+  SourceBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${ApplicationName}-${AWS::Region}-artifact-source.vueling.com"
+      VersioningConfiguration:
+        Status: Enabled
+
+  # Pipeline Bucket
+  ElasticBeanstalkPiPelineBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${ApplicationName}-${AWS::Region}-artifact-pipeline.vueling.com"
+  
+  # deployment approval topic
+  ApprovalSNSTopic:
+    Type: AWS::SNS::Topic
+    DeletionPolicy: Delete
+    Properties:
+      Subscription:
+      - Endpoint: !Ref NotificationEmail
+        Protocol: email
+
+  # SECURITY GROUPS
+  ElasticBeanstalkSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "${ApplicationName} ElasticBeanstalk Security Group."
+      VpcId: !Ref DestinationVPC
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: '80'
+        ToPort: '80'
+        CidrIp: 0.0.0.0/0
+      - IpProtocol: tcp
+        FromPort: '443'
+        ToPort: '443'
+        CidrIp: 0.0.0.0/0
+      - IpProtocol: tcp
+        FromPort: '123'
+        ToPort: '123'
+        CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+      - IpProtocol: tcp
+        FromPort: '80'
+        ToPort: '80'
+        CidrIp: 0.0.0.0/0
+      - IpProtocol: tcp
+        FromPort: '443'
+        ToPort: '443'
+        CidrIp: 0.0.0.0/0
+      - IpProtocol: tcp
+        FromPort: '123'
+        ToPort: '123'
+        CidrIp: 0.0.0.0/0
+
+  # IAM  
+  CodeBuildRole:
+      Type: AWS::IAM::Role
+      DeletionPolicy: Delete
+      Properties:
+        AssumeRolePolicyDocument:
+          Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+              - codebuild.amazonaws.com
+            Action:
+            - sts:AssumeRole
+        Path: "/"
+       
+  ElasticBeanstalkAppRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Path: /
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          -
+            Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+
+  ElasticBeanstalkAppInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /
+      Roles:
+      - !Ref ElasticBeanstalkAppRole
+
+  ElasticBeanstalkServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ApplicationName}-ElasticBeanstalk-Role"
+      Path: /
+      AssumeRolePolicyDocument: |
+        {
+          "Statement": [{
+            "Effect": "Allow",
+            "Principal": { "Service": [ "elasticbeanstalk.amazonaws.com" ]},
+            "Action": [ "sts:AssumeRole" ]
+          }]
+        }
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSElasticBeanstalkEnhancedHealth
+        - arn:aws:iam::aws:policy/service-role/AWSElasticBeanstalkService
+
+  ElasticBeanstalkDeploymentPiPelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Path: /
+      RoleName: !Sub "${ApplicationName}-CodePipeline-Role"
+      AssumeRolePolicyDocument: |
+        {
+          "Version": "2012-10-17",
+          "Statement": {
+            "Effect": "Allow",
+            "Principal": {"Service": "codepipeline.amazonaws.com"},
+            "Action": "sts:AssumeRole"
+          }
+        }
+
+  # TO-DO: Restrict to specific resources.
+  ElasticBeanstalkDeploymentPiPelinePolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub "${ApplicationName}-CodePipeline-Policy"
+      Roles:
+        - !Ref ElasticBeanstalkDeploymentPiPelineRole
+        - !Ref CodeBuildRole
+      PolicyDocument: |
+        {
+          "Statement": [
+              {
+                  "Action": [
+                      "s3:GetObject",
+                      "s3:GetObjectVersion",
+                      "s3:GetBucketVersioning"
+                  ],
+                  "Resource": "*",
+                  "Effect": "Allow"
+              },
+              {
+                  "Action": [
+                      "s3:PutObject"
+                  ],
+                  "Resource": [
+                      "arn:aws:s3:::codepipeline*",
+                      "arn:aws:s3:::elasticbeanstalk*"
+                  ],
+                  "Effect": "Allow"
+              },
+              {
+                  "Action": [
+                      "codedeploy:CreateDeployment",
+                      "codedeploy:GetApplicationRevision",
+                      "codedeploy:GetDeployment",
+                      "codedeploy:GetDeploymentConfig",
+                      "codedeploy:RegisterApplicationRevision"
+                  ],
+                  "Resource": "*",
+                  "Effect": "Allow"
+              },
+              {
+                  "Action": [
+                      "elasticbeanstalk:*",
+                      "ec2:*",
+                      "elasticloadbalancing:*",
+                      "autoscaling:*",
+                      "logs:*",
+                      "cloudwatch:*",
+                      "s3:*",
+                      "sns:*",
+                      "cloudformation:*",
+                      "rds:*",
+                      "sqs:*",
+                      "ecs:*",
+                      "iam:PassRole"
+                  ],
+                  "Resource": "*",
+                  "Effect": "Allow"
+              },
+              {
+                  "Action": [
+                      "lambda:InvokeFunction",
+                      "lambda:ListFunctions"
+                  ],
+                  "Resource": "*",
+                  "Effect": "Allow"
+              },
+              {
+                  "Action": [
+                      "opsworks:CreateDeployment",
+                      "opsworks:DescribeApps",
+                      "opsworks:DescribeCommands",
+                      "opsworks:DescribeDeployments",
+                      "opsworks:DescribeInstances",
+                      "opsworks:DescribeStacks",
+                      "opsworks:UpdateApp",
+                      "opsworks:UpdateStack"
+                  ],
+                  "Resource": "*",
+                  "Effect": "Allow"
+              },
+              {
+                  "Action": [
+                      "cloudformation:CreateStack",
+                      "cloudformation:DeleteStack",
+                      "cloudformation:DescribeStacks",
+                      "cloudformation:UpdateStack",
+                      "cloudformation:CreateChangeSet",
+                      "cloudformation:DeleteChangeSet",
+                      "cloudformation:DescribeChangeSet",
+                      "cloudformation:ExecuteChangeSet",
+                      "cloudformation:SetStackPolicy",
+                      "cloudformation:ValidateTemplate",
+                      "iam:PassRole"
+                  ],
+                  "Resource": "*",
+                  "Effect": "Allow"
+              },
+              {
+                  "Action": [
+                      "codebuild:BatchGetBuilds",
+                      "codebuild:StartBuild"
+                  ],
+                  "Resource": "*",
+                  "Effect": "Allow"
+              }
+          ],
+          "Version": "2012-10-17"
+        }
+
+Outputs:
+
+  ElasticBeanstalkApplication:
+    Description: ElasticBeanstalk Application.
+    Value: !Ref ElasticBeanstalkApplication
+    Export:
+      Name: !Sub "${AWS::StackName}-ElasticBeanstalk-Application"
+
+  ElasticBeanstalkApplicationVPC:
+    Description: ElasticBeanstalk Application VPC.
+    Value: !Ref DestinationVPC
+    Export:
+      Name: !Sub "${AWS::StackName}-ElasticBeanstalk-Application-VPC"
+  
+  ElasticBeanstalkApplicationConfigurationTemplate:
+    Description: ElasticBeanstalk Application Configuration Template.
+    Value: !Ref ElasticBeanstalkConfigurationTemplate
+    Export:
+      Name: !Sub "${AWS::StackName}-ElasticBeanstalk-Application-Configuration"

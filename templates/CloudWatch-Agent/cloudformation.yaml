@@ -1,0 +1,111 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: AWS CloudFormation templates to create AWS Elasticsearch Service domain.
+Parameters:
+  NodeName:
+    Description: The node name.
+    Type: String
+    AllowedPattern: "[A-Za-z0-9]+"
+    ConstraintDescription: Please enter a valid name using letters and numbers only.
+  NodeVersion:
+    Description: The node ES version.
+    Type: String
+    AllowedValues:
+    - '6.2'
+    - '6.0'
+    - '5.5'
+    - '5.3'
+    - '5.1'
+    - '2.3'
+    - '1.5'
+    ConstraintDescription: Must be a valid Elasticsearch version.
+  NodeType:
+    Description: The node type to be provisioned for the Elasticsearch cluster
+    Type: String
+    Default: t2.small.elasticsearch
+    AllowedValues:
+    - t2.small.elasticsearch
+    - t2.medium.elasticsearch
+    - c4.large.elasticsearch
+    - c4.xlarge.elasticsearch
+    - m3.medium.elasticsearch
+    - m3.large.elasticsearch
+    - m3.xlarge.elasticsearch
+    - m4.large.elasticsearch
+    - m4.xlarge.elasticsearch
+    - i2.xlarge.elasticsearch
+    - i2.2xlarge.elasticsearch
+    - i3.large.elasticsearch
+    - i3.xlarge.elasticsearch
+    ConstraintDescription: Must be a valid Elasticsearch node type.
+  NodeCount:
+    Description: The number of nodes in the Elasticsearch cluster.
+    Type: Number
+    Default: '1'
+  VolumeSize:
+    Description: The EBS volume size.
+    Type: Number
+    Default: '10'
+  SecurityGroups:
+    Description: The VPC related security group(s)
+    Type: List<AWS::EC2::SecurityGroup::Id>
+  SubnetIds:
+    Description: The VPC related subnets (>1)
+    Type: List<AWS::EC2::Subnet::Id>
+
+
+Resources:
+  ElasticsearchDomain:
+    Type: AWS::Elasticsearch::Domain
+    Properties:
+      DomainName: !Ref NodeName
+      ElasticsearchClusterConfig:
+        DedicatedMasterEnabled: 'false'
+        InstanceCount: !Ref NodeCount
+        ZoneAwarenessEnabled: 'false'
+        InstanceType: !Ref NodeType
+      ElasticsearchVersion: !Ref NodeVersion
+      EBSOptions:
+        EBSEnabled: true
+        Iops: 0
+        VolumeSize: !Ref VolumeSize
+        VolumeType: gp2
+      SnapshotOptions:
+        AutomatedSnapshotStartHour: '0'
+      VPCOptions:
+        SecurityGroupIds: !Ref SecurityGroups
+        SubnetIds: !Ref SubnetIds  
+      AdvancedOptions:
+        rest.action.multi.allow_explicit_index: 'true'
+      AccessPolicies:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Deny
+            Principal:
+              AWS: '*'
+            Action: 'es:*'
+            Resource: '*'
+
+
+Outputs:
+  KibanaURL:
+    Description: Kibana URL
+    Value:
+      Fn::Join:
+      - ''
+      - - Fn::GetAtt:
+          - ElasticsearchDomain
+          - DomainEndpoint
+        - "/_plugin/kibana/"
+  ElasticsearchEndpoint:
+    Description: Elasticsearch domain endpoint
+    Value:
+      Fn::GetAtt:
+      - ElasticsearchDomain
+      - DomainEndpoint
+  ElasticsearchDomainARN:
+    Description: Elasticsearch domain ARN
+    Value:
+      Fn::GetAtt:
+      - ElasticsearchDomain
+      - DomainArn
