@@ -363,6 +363,10 @@ Resources:
         Name: !Sub "${ElasticBeanstalkApplication}-codebuild-test-evironment"
         Description: Test Environment
         ServiceRole: !GetAtt CodeBuildRole.Arn
+        VpcConfig:
+          VpcId: !Ref DestinationVPC
+          Subnets: !Ref DestinationSubnets
+          SecurityGroupIds: !Ref ElasticBeanstalkSecurityGroup
         Artifacts:
           Type: CODEPIPELINE
         Environment:
@@ -382,7 +386,6 @@ Resources:
                   # get the new environment enpoint from previous step
                   - ENDPOINT=$(cat endpoint.txt | sed 's/"//g')
                   - echo $ENDPOINT
-                  - curl $ENDPOINT
                   # replace the test with the appropiate environment url
                   - sed -i -e "s/{{URL}}/$ENDPOINT/g" postman.test.json
                   - cat postman.test.json
