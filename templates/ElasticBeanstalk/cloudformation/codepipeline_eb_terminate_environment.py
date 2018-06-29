@@ -15,19 +15,16 @@ lambdaclient = boto3.client('lambda')
 def lambda_handler(event, context):
 
     print(event)
-    print(context)
-    
+
     timer = threading.Timer((context.get_remaining_time_in_millis() / 1000.00) - 60, timeout, args=[event, context])
     timer.start()
     
     try:
-        
-        application_name = event['ApplicationName']
-        environment_id = event['EnvironmentId']
-        while (environment_launch_in_progress(application_name, environment_id)):
+
+        while (environment_launch_in_progress(event['ApplicationName'], event['EnvironmentId'])):
             sleep(5)
         
-        delete_environment(environment_id)
+        delete_environment(event['EnvironmentId'])
         
     except Exception as e:
         catch_exception(e)
@@ -71,12 +68,10 @@ def timeout(event, context):
     
     print("Timeout")
     print(event)
-    print(context)
-   
+
     # if we had no time to terminate the environment, we call again ourself.
-    environment_id = event['EnvironmentId']
-    if environment_launch_in_progress(environment_id):
-        print("Invoke Lambda: " + context['invoked_function_arn'])
+    if environment_launch_in_progress(event['ApplicationName'], event['EnvironmentId']):
+        print("Recurse call to me!")
         response = lambdaclient.invoke(
             FunctionName=context['invoked_function_arn'],
             InvocationType='Event',

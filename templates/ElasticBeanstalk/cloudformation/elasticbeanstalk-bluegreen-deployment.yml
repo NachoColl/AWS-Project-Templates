@@ -14,7 +14,7 @@ Parameters:
   # Email address to receive SNS approval requests
   NotificationEmail:
     Type: String
-    Description: "Email address to receive approval requests"
+    Description: Email address to receive approval requests.
     MinLength: 6
     AllowedPattern: ".+@[a-z0-9]+[-.a-z0-9]*(\\.[a-z][a-z]+)+"
     ConstraintDescription: "Provide a valid email address"
@@ -48,6 +48,10 @@ Parameters:
 
   DeployLambda:
     Description: The create environment lambda function name.
+    Type: String
+
+  TerminateLambda:
+    Description: The terminate environment lambda function name.
     Type: String
 
 Metadata: 
@@ -109,9 +113,9 @@ Resources:
           Value: 
             !Ref DestinationVPC
 
-        - Namespace: aws:ec2:vpc
-          OptionName: ELBScheme
-          Value: internal
+        #- Namespace: aws:ec2:vpc
+        #  OptionName: ELBScheme
+        #  Value: internal
 
         - Namespace: aws:ec2:vpc
           OptionName: Subnets
@@ -127,6 +131,12 @@ Resources:
             - ','
             - !Ref DestinationSubnets
 
+        # You must set the value to true if you want to 
+        # include your load balancer and instances in a single public subnet
+        - Namespace: aws:ec2:vpc
+          OptionName: AssociatePublicIpAddress
+          Value: true
+
         # LOAD BALANCER
         - Namespace: aws:elasticbeanstalk:environment
           OptionName: EnvironmentType
@@ -135,6 +145,10 @@ Resources:
         - Namespace: aws:elasticbeanstalk:environment
           OptionName: LoadBalancerType
           Value: application
+
+        #- Namespace: aws:elasticbeanstalk:application
+        #  OptionName: Application Healthcheck URL
+        #  Value: !Ref LBHealthCheck
 
         # INSTANCE
         - Namespace: aws:autoscaling:launchconfiguration
@@ -166,7 +180,7 @@ Resources:
 
         - Namespace: aws:elasticbeanstalk:cloudwatch:logs
           OptionName: DeleteOnTerminate
-          Value: false
+          Value: true
         
         - Namespace: aws:elasticbeanstalk:cloudwatch:logs:health
           OptionName: HealthStreamingEnabled
@@ -174,7 +188,7 @@ Resources:
 
         - Namespace: aws:elasticbeanstalk:cloudwatch:logs:health
           OptionName: DeleteOnTerminate
-          Value: false
+          Value: true
   
   ###########################################
   # APP Deployment Pipeline To ENVIRONMENT  #
@@ -253,6 +267,30 @@ Resources:
           Configuration:
             ProjectName: !Ref CodeBuildTestEnvironment
           RunOrder: 1
+      # SWAP BLUE/GREEN ENVIRONMENTS
+      - Name: Approve-And-Swap
+        Actions:
+        - Name: Approve
+          ActionTypeId:
+            Category: Approval
+            Owner: AWS
+            Provider: Manual
+            Version: '1'
+          Configuration:
+            NotificationArn: !Ref ApprovalSNSTopic
+            CustomData: !Sub "A new ${ApplicationName} version has been deployed to green environment. Please check the test results and approve/deny. Approving will swap blue/green."
+          RunOrder: 1
+        - Name: SwapEnvironments
+          ActionTypeId:
+            Category: Build
+            Owner: AWS
+            Version: '1'
+            Provider: CodeBuild
+          InputArtifacts:
+          - Name: GreenEnvironmentTests
+          Configuration:
+            ProjectName: !Ref CodeBuildSwapEnvironments
+          RunOrder: 2
  
   # CODEBUILD for invoking lambda to create green environment
   CodeBuildCreateGreenEnvironment:
@@ -333,25 +371,35 @@ Resources:
                   - curl -qL -o jq https://stedolan.github.io/jq/download/linux64/jq && chmod +x ./jq
                   - ./jq --version
               build:
-                commands:
+                commands:                
                   # get environment id from previous step
                   - ENVIRONMENT_ID=$(cat createenvironment.json | ./jq '.EnvironmentId' | sed 's/"//g')
                   - echo $ENVIRONMENT_ID
+                  # prepare invoke lambda in case of launch fail
+                  - PAYLOAD='{"ApplicationName":"${ElasticBeanstalkApplication}", "EnvironmentId":"'"$ENVIRONMENT_ID"'"}'     
+                  - echo $PAYLOAD
+                  # check environment setup 
                   - STATUS="Launching" # EB takes a while to get ready.
+                  - i=0 # counter to force quit
                   # wait the environment is ready
-                  - while [ $STATUS != "Ready" ]; do sleep 1m; STATUS=$(aws elasticbeanstalk describe-environments --environment-ids $ENVIRONMENT_ID --query 'Environments[0].Status' | sed 's/"//g'); echo $STATUS; done
+                  - while [ $STATUS != "Ready" -a $i -lt 25 ]; do sleep 1m; i=$((i + 1)); STATUS=$(aws elasticbeanstalk describe-environments --environment-ids $ENVIRONMENT_ID --query 'Environments[0].Status' | sed 's/"//g'); echo $STATUS; done
                   - echo $STATUS
+                  # terminate envioronment on fail / timeout
+                  - if [ $STATUS != "Ready" ]; then aws lambda invoke --invocation-type Event --function-name ${TerminateLambda} --payload "$PAYLOAD" --output json terminateenvironment.json; exit 1; fi
                   # get the environment endpoint
                   - ENDPOINT=$(aws elasticbeanstalk describe-environments --environment-ids $ENVIRONMENT_ID --query 'Environments[0].CNAME' | sed 's/"//g');
                   - echo $ENDPOINT
                   - echo $ENDPOINT > endpoint.txt
             artifacts:
               files:
+                # the environments BLUE/GREEN ids
+                - createenvironment.json
                 # endpoint.txt contains the new environment endpoint url
                 - endpoint.txt
                 # postman.test.json the environment test to execute (provided on the artifact zip)
                 - postman.test.json
-        TimeoutInMinutes: 30
+
+        TimeoutInMinutes: 60
 
   # CODEBUILD for TESTING
   CodeBuildTestEnvironment:
@@ -363,10 +411,11 @@ Resources:
         Name: !Sub "${ElasticBeanstalkApplication}-codebuild-test-evironment"
         Description: Test Environment
         ServiceRole: !GetAtt CodeBuildRole.Arn
-        VpcConfig:
-          VpcId: !Ref DestinationVPC
-          Subnets: !Ref DestinationSubnets
-          SecurityGroupIds: !Ref ElasticBeanstalkSecurityGroup
+        #VpcConfig:
+        #  VpcId: !Ref DestinationVPC
+        #  Subnets: !Ref DestinationSubnets
+        #  SecurityGroupIds: 
+        #    - !Ref ElasticBeanstalkSecurityGroup
         Artifacts:
           Type: CODEPIPELINE
         Environment:
@@ -390,11 +439,58 @@ Resources:
                   - sed -i -e "s/{{URL}}/$ENDPOINT/g" postman.test.json
                   - cat postman.test.json
                   # run the tests
-                  - newman run -r html,cli postman.test.json --reporter-html-export report.html
-                  - cat report.html
+                  - echo $CODEBUILD_SRC_DIR
+                  - newman run postman.test.json --bail --reporters html --reporter-html-export report.html
+                  # copy test results to s3
+                  - aws s3 cp report.html s3://${SourceBucket}/report.html
+                  # generate pre-signed URL
+                  - echo -e "Test results for ${ElasticBeanstalkApplication} deployment:\n" > snsmessage.txt
+                  - aws s3 presign s3://${SourceBucket}/report.html --expires-in 86400 >> snsmessage.txt
+                  - cat snsmessage.txt
+                  # send report to SNS
+                  - aws sns publish --topic-arn ${ApprovalSNSTopic} --message file://snsmessage.txt
             artifacts:
               files:
-                - report.html
+                 # the environments BLUE/GREEN ids
+                - createenvironment.json
+        TimeoutInMinutes: 30
+
+  # CODEBUILD to swap ENVIRONMENTS URL
+  CodeBuildSwapEnvironments:
+      Type: AWS::CodeBuild::Project
+      DeletionPolicy: Delete
+      DependsOn:
+        - CodeBuildRole
+      Properties:
+        Name: !Sub "${ElasticBeanstalkApplication}-codebuild-swap-environments"
+        Description: Swap Environments
+        ServiceRole: !GetAtt CodeBuildRole.Arn     
+        Artifacts:
+          Type: CODEPIPELINE
+        Environment:
+          Type: LINUX_CONTAINER
+          ComputeType: BUILD_GENERAL1_SMALL # http://docs.aws.amazon.com/codebuild/latest/userguide/build-env-ref-compute-types.html
+          Image: aws/codebuild/nodejs:10.1.0 # http://docs.aws.amazon.com/codebuild/latest/userguide/build-env-ref-available.html
+        Source:
+          Type: CODEPIPELINE
+          BuildSpec: !Sub |
+            version: 0.2
+            phases:
+              install:
+                commands:
+                  # install jq (to manage json)
+                  - curl -qL -o jq https://stedolan.github.io/jq/download/linux64/jq && chmod +x ./jq
+                  - ./jq --version
+              build:
+                commands:
+                  - cat createenvironment.json
+                  - GREEN_ENVIRONMENT_ID=$(cat createenvironment.json | ./jq '.EnvironmentId' | sed 's/"//g')
+                  - echo $GREEN_ENVIRONMENT_ID
+                  - BLUE_ENVIRONMENT_ID=$(cat createenvironment.json | ./jq '.BlueEnvironmentId' | sed 's/"//g')
+                  - echo $BLUE_ENVIRONMENT_ID
+                  # SWAP CNNAMES
+                  - if [ $BLUE_ENVIRONMENT_ID != null ]; then aws elasticbeanstalk swap-environment-cnames --source-environment-id $BLUE_ENVIRONMENT_ID --destination-environment-id $GREEN_ENVIRONMENT_ID; fi
+        
         TimeoutInMinutes: 30
 
   # Deployment bucket
