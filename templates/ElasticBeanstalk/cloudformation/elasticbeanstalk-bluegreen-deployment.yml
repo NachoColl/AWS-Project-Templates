@@ -54,6 +54,11 @@ Parameters:
     Description: The terminate environment lambda function name.
     Type: String
 
+  HealthCheckPath:
+    Description: The Health Check Path (eg. /health/)
+    Type: String
+
+
 Metadata: 
   AWS::CloudFormation::Interface: 
     ParameterGroups: 
@@ -62,6 +67,7 @@ Metadata:
           default: "Application Configuration"
         Parameters: 
           - ApplicationName
+          - HealthCheckPath
           - NotificationEmail
       - 
         Label: 
@@ -81,6 +87,7 @@ Metadata:
           default: "Pipeline Invokes"
         Parameters: 
           - DeployLambda
+          - TerminateLambda
 
 Resources:
 
@@ -146,9 +153,9 @@ Resources:
           OptionName: LoadBalancerType
           Value: application
 
-        #- Namespace: aws:elasticbeanstalk:application
-        #  OptionName: Application Healthcheck URL
-        #  Value: !Ref LBHealthCheck
+        - Namespace: aws:elasticbeanstalk:environment:process:default
+          OptionName: HealthCheckPath
+          Value: !Ref HealthCheckPath
 
         # INSTANCE
         - Namespace: aws:autoscaling:launchconfiguration
