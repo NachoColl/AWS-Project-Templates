@@ -169,7 +169,10 @@ namespace deploy
             StringBuilder cloudformationResources = new StringBuilder();
             cloudformationResources.AppendLine();
 
-            int environmentVersion1=Environment.Equals("staging") ? BuildVersion + (IsOdd(BuildVersion) ? 0 : 1) : BuildVersion + (IsOdd(BuildVersion) ? 1 : 0),
+            // staging and prod on the same account
+            // staging will use odd numbers (2 lambda versions)
+            // prod will use even numbers (also 2 lambda versions)
+            int environmentVersion1=Environment.Equals("staging") ? BuildVersion + (BuildVersion - 1) : BuildVersion * 2,
                 environmentVersion2=environmentVersion1 + 2;
 
             foreach(AWSAPIMethodInfo function in functions){
