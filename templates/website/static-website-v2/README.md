@@ -1,6 +1,8 @@
 # Static Website DevOps Pipeline - Version 2
 
-This template creates a static website in AWS. Compared to Version 1, it uses GitHub as the repo for triggering deployment.
+This template creates a static website in AWS. 
+
+Compared to Version 1, it uses GitHub as the repo for triggering deployment (after some tests, I don't like CodeCommit :().
 
 ## How To Use
 
