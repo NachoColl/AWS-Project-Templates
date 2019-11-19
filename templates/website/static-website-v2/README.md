@@ -1,6 +1,16 @@
-# Simple Static Website
+# Static Website DevOps Pipeline - Version 2
 
-./cf-devops.yml defines the deployment CodePipeline to deploy the static website on S3 + Cloudfront. Check ./.deploy/sam.yml for related cloudformation template, and ./.build/website.yml for the code to copy webpages and invalidate cloudfront distribution.
+This template creates a static website in AWS. Compared to Version 1, it uses GitHub as the repo for triggering deployment.
+
+## How To Use
+
+Create a new GitHub repo using the same base strucuture as in this folder and use [cf-devops.yml](./cf-devops.yml) cloudformation teamplate to create the deployment pipeline on your AWS Account (use **us-east-1**, as the related website SSL Certificate must get issued in us-east-1).
+
+To get GitHub webhooks you will require to create a secret token and use it as a secret parameter on the cf-devops.yml cf template.
+
+Enjoy!
+
+
 
 
 

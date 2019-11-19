@@ -1,4 +1,4 @@
-# Static Website DevOps Pipeline
+# Static Website DevOps Pipeline - Version 1
 
 This template creates a static website pipeline in AWS.
 
