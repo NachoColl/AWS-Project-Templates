@@ -1,0 +1,262 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: >
+  AWS CloudFormation Template for simple website deployment triggering AWS Codepipeline from GitHub.
+
+Parameters:
+
+  RepositoryOwner:
+    Type: String
+    Description: The related Github repo owner.
+    Default: NachoColl
+
+  RepositoryName:
+    Type: String
+    Description: The related Github repo name that triggers the pipeline.
+    Default: nachocoll-website
+
+  RepositoryBranchName:
+    Type: String
+    Description: Git branch that triggers the pipeline.
+    Default: prod
+
+  GitHubSecret:
+    Type: String
+    NoEcho: true
+    Description: GitHub Secret to access the required repos.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: "GitHub Repository Settings"
+        Parameters:
+          - RepositoryOwner
+          - RepositoryName
+          - RepositoryBranchName
+          - GitHubSecret
+     
+Conditions:
+  IsProd: !Equals [!Ref RepositoryBranchName, prod]
+
+Resources:
+
+  ArtifactStoreBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "codepipeline-artifacts--${RepositoryName}-${RepositoryBranchName}"
+      VersioningConfiguration:
+        Status: Suspended 
+
+  Webhook:
+    Type: "AWS::CodePipeline::Webhook"
+    Properties:
+      Name: !Sub "webhook-${RepositoryName}-${RepositoryBranchName}"
+      AuthenticationConfiguration:
+        SecretToken: !Ref GitHubSecret
+      Filters:
+        - JsonPath: "$.ref"
+          MatchEquals: refs/heads/{Branch}
+      Authentication: GITHUB_HMAC
+      TargetPipeline: !Ref WebhookPipeline
+      TargetAction: SourceAction
+      TargetPipelineVersion: !GetAtt WebhookPipeline.Version
+      RegisterWithThirdParty: true
+
+  WebhookPipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      ArtifactStore:
+        Location: !Ref ArtifactStoreBucket
+        Type: S3
+      DisableInboundStageTransitions: []
+      Name: !Sub "pipeline-${RepositoryName}-${RepositoryBranchName}"
+      RoleArn: !GetAtt [PipelineRole, Arn]
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: SourceAction
+              ActionTypeId:
+                Category: Source
+                Owner: ThirdParty
+                Version: 1
+                Provider: GitHub
+              OutputArtifacts:
+                - Name: SourceOutput
+              Configuration:
+                Owner: !Ref RepositoryOwner
+                Repo: !Ref RepositoryName
+                Branch: !Ref RepositoryBranchName
+                OAuthToken: !Ref GitHubSecret
+                PollForSourceChanges: false
+              RunOrder: 1
+        - Name: Deploy
+          Actions:
+            - Name: CreateBaseStack
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: "1"
+              InputArtifacts:
+                - Name: SourceOutput
+              Configuration:
+                # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/continuous-delivery-codepipeline-action-reference.html#w2ab1c13c13b9
+                ActionMode: !If [IsProd, CREATE_UPDATE, REPLACE_ON_FAILURE]
+                Capabilities: CAPABILITY_IAM,CAPABILITY_NAMED_IAM,CAPABILITY_AUTO_EXPAND
+                RoleArn: !GetAtt [CloudFormationRole, Arn]
+                StackName: !Sub "base-${RepositoryName}-${RepositoryBranchName}"
+                TemplateConfiguration: !Sub "SourceOutput::.deploy/sam-${RepositoryBranchName}.json"
+                TemplatePath: !Sub "SourceOutput::.deploy/sam.yml"
+              RunOrder: "1"
+        - Name: Website
+          Actions:
+            - Name: WebsiteBuild
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Version: 1
+                Provider: CodeBuild
+              InputArtifacts:
+                - Name: SourceOutput
+              OutputArtifacts:
+                - Name: WebsiteBuildOuput
+              Configuration:
+                ProjectName: !Ref WebsiteBuildProject
+              RunOrder: 1
+
+ 
+  # Website deploy CodeBuild
+  WebsiteBuildProject:
+    Type: AWS::CodeBuild::Project
+    DependsOn: ArtifactStoreBucket
+    Properties:
+      ServiceRole: !Ref CodeBuildRole
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        # https://docs.aws.amazon.com/codebuild/latest/userguide/build-env-ref-available.html
+        Image: aws/codebuild/dot-net:core-2.1
+        EnvironmentVariables:
+          - Name: REPOSITORY_NAME
+            Value: !Ref RepositoryName
+          - Name: REPOSITORY_BRANCH_NAME
+            Value: !Ref RepositoryBranchName
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: ".build/website.yml"
+      TimeoutInMinutes: 10
+      Cache:
+        Type: S3
+        Location: !Sub "codepipeline-artifacts--${RepositoryName}-${RepositoryBranchName}/codebuild"
+
+  ####################################
+  # ROLES
+  ####################################
+
+  PipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "codepipeline-${RepositoryName}-${RepositoryBranchName}"
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: ["sts:AssumeRole"]
+            Effect: Allow
+            Principal:
+              Service: [codepipeline.amazonaws.com]
+        Version: "2012-10-17"
+      Path: /
+      Policies:
+        - PolicyName: CodePipelineAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Action:
+                  - "cloudwatch:*"
+                  - "events:*"
+                  - "s3:*"
+                  - "logs:*"
+                  - "cloudformation:*"
+                  - "iam:PassRole"
+                  - "sns:Publish"
+                  - "codebuild:*"
+                Effect: Allow
+                Resource: "*"
+
+  #TODO Create a more specific role
+  CloudFormationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "cloudformation-${RepositoryName}-${RepositoryBranchName}"
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: ["sts:AssumeRole"]
+            Effect: Allow
+            Principal:
+              Service: [cloudformation.amazonaws.com]
+        Version: "2012-10-17"
+      Path: /
+      Policies:
+        - PolicyName: CloudFormationRole
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Action:
+                  - "cloudwatch:*"
+                  - "events:*"
+                  - "s3:*"
+                  - "kms:*"
+                  - "lambda:*"
+                  - "dynamodb:*"
+                  - "apigateway:*"
+                  - "sns:*"
+                  - "logs:*"
+                  - "sqs:*"
+                  - "cloudformation:*"
+                  - "iam:*"
+                  - "cognito-idp:*"
+                  - "cognito-identity:*"
+                  - "acm:*"
+                  - "cloudfront:*"
+                  - "route53:*"
+                Effect: Allow
+                Resource: "*"
+
+
+  #TODO Create a more specific role
+  CodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "codebuild-${RepositoryName}-${RepositoryBranchName}"
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: ["sts:AssumeRole"]
+            Effect: Allow
+            Principal:
+              Service: [codebuild.amazonaws.com]
+        Version: "2012-10-17"
+      Path: /
+      Policies:
+        - PolicyName: CodePipelineAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Action:
+                  - "s3:*"
+                  - "logs:*"
+                  - "lambda:*"
+                  - "sqs:*"
+                  - "dynamodb:*"
+                  - "iam:PassRole"
+                  - "sns:Publish"
+                  - "cloudformation:DescribeStacks"
+                  - "cloudfront:CreateInvalidation"
+                Effect: Allow
+                Resource: "*"
+
+Outputs:
+  WebHookURL:
+    Description: The URL to use to register webhook on git side.
+    Value: !GetAtt Webhook.Url

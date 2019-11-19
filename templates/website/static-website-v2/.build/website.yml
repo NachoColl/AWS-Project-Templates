@@ -1,0 +1,43 @@
+version: 0.2
+
+# https://docs.aws.amazon.com/codebuild/latest/userguide/build-env-ref-env-vars.html
+phases:
+  install:
+    commands:
+      # update apt-get
+      - sudo apt-get update -y
+      # install pip
+      - pip install --upgrade pip
+      # install awscli
+      - pip install awscli --upgrade --user
+
+  build:
+    commands:
+
+      ############################
+      # project env variables
+      ############################
+
+      # incremental build number
+      - BUILD_NUMBER=$(echo $(($(date +%s%N)/100000000000)))      
+      # S3 websitebucket (from base-x cloudformation template)
+      - S3_BUCKET=$(aws cloudformation describe-stacks --stack-name base-$REPOSITORY_NAME-$REPOSITORY_BRANCH_NAME --query 'Stacks[0].Outputs[?OutputKey==`WebsiteBucket`].OutputValue' --output text | sed 's/"//g')
+      # Cloudfront distribution (from base-x cloudformation template)
+      - CLOUDFRONT_DISTRIBUTION=$(aws cloudformation describe-stacks --stack-name base-$REPOSITORY_NAME-$REPOSITORY_BRANCH_NAME --query 'Stacks[0].Outputs[?OutputKey==`CloudfrontDistributionId`].OutputValue' --output text | sed 's/"//g')    
+
+      ############################
+      # deploy website
+      ############################
+
+      # Replace build number on HTML pages (e.g. <meta property="deployment" content="AWS_BUILD_NUMBER" />)
+      - sed -i -e "s/AWS_BUILD_NUMBER/$BUILD_NUMBER/g" $CODEBUILD_SRC_DIR/src/*.html
+
+      # Copy website content to S3 bucket
+      - aws s3 cp $CODEBUILD_SRC_DIR/src/ s3://$S3_BUCKET/ --recursive --acl public-read
+
+      # Create invalidation after new files deployed
+      - aws cloudfront create-invalidation --distribution-id $CLOUDFRONT_DISTRIBUTION --paths '/*'
+
+artifacts:
+  files:
+    - "**/*"

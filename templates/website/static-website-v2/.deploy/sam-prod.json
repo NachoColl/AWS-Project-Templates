@@ -1,0 +1,12 @@
+{
+    "Parameters": {
+        "RepositoryName": "nachocoll-website",
+        "RepositoryBranchName": "prod",
+        "DomainName": "nachocoll.website",
+        "CreateRoute53HostedZone": "false"
+    },
+    "Tags": {
+        "Stream": "NachoColl",
+        "ProjectCode": "NachoColl.Website"
+    }
+}
